@@ -1,0 +1,8 @@
+{
+  "devices": [
+    {"device_id": "feeder-01", "type": "feeder_bay", "site": "pune-substation-01", "seed": 1},
+    {"device_id": "feeder-02", "type": "feeder_bay", "site": "pune-substation-01", "seed": 2},
+    {"device_id": "xfmr-01", "type": "transformer", "site": "pune-substation-01", "seed": 3},
+    {"device_id": "motor-01", "type": "motor", "site": "pune-factory-01", "seed": 4}
+  ]
+}

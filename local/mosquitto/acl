@@ -1,0 +1,7 @@
+# Least privilege, same intent as the AWS IoT policy in M2:
+# a device (%u = its cert CN) may only publish to its own telemetry topic.
+pattern write iiot/%u/telemetry
+
+# Read-only observer identity for local debugging and the integration test.
+user monitor
+topic read iiot/#

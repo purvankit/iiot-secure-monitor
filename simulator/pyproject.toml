@@ -21,8 +21,11 @@ packages = ["iiot_sim"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: needs the local Mosquitto broker from docker-compose"]
-addopts = "-m 'not integration'"
+markers = [
+    "integration: needs the local Mosquitto broker from docker-compose",
+    "aws: needs the deployed AWS IoT Core stack (infra/envs/dev)",
+]
+addopts = "-m 'not integration and not aws'"
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,2 @@
+# Copy to backend.hcl (gitignored) and fill in the bootstrap output `state_bucket`.
+bucket = "iiot-secure-monitor-tfstate-<ACCOUNT_ID>"

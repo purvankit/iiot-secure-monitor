@@ -222,3 +222,13 @@ __marimo__/
 # Local throwaway certs and keys (never commit private keys)
 local/certs/
 *.key
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+infra/envs/*/backend.hcl
+
+# AWS device certs/keys (CSRs in infra/envs/dev/device-csrs are public and committed)
+local/aws-certs/

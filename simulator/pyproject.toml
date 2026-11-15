@@ -1,0 +1,31 @@
+[project]
+name = "iiot-sim"
+version = "0.1.0"
+description = "Simulated substation/factory devices, Modbus PLC and edge gateway"
+requires-python = ">=3.12"
+dependencies = [
+    "paho-mqtt>=2.1,<3",
+    # pymodbus is mid-migration to its SimDevice API (v4); pin the minor version.
+    "pymodbus>=3.16,<3.17",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["iiot_sim"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: needs the local Mosquitto broker from docker-compose"]
+addopts = "-m 'not integration'"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

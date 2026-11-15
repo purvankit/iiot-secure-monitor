@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local throwaway certs and keys (never commit private keys)
+local/certs/
+*.key

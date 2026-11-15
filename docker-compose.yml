@@ -1,0 +1,46 @@
+# Local M1 stack: Mosquitto (mTLS) + 4 MQTT devices + Modbus PLC + edge gateway.
+# Run ./scripts/gen-local-certs.sh first.
+x-sim: &sim
+  build: ./simulator
+  image: iiot-sim:local
+  restart: unless-stopped
+  depends_on: [mosquitto]
+  volumes:
+    - ./local/certs:/certs:ro
+  environment:
+    MQTT_HOST: mosquitto
+    MQTT_PORT: "8883"
+    CERTS_DIR: /certs
+    INTERVAL_S: "5"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    ports:
+      - "127.0.0.1:8883:8883"   # bind to localhost only
+    volumes:
+      - ./local/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./local/mosquitto/acl:/mosquitto/config/acl:ro
+      - ./local/certs:/mosquitto/certs:ro
+
+  devices:
+    <<: *sim
+    command: ["python", "-m", "iiot_sim.run_devices", "--config", "config/devices.json"]
+
+  plc:
+    <<: *sim
+    depends_on: []
+    command: ["python", "-m", "iiot_sim.plc_sim", "--port", "5020"]
+    # No published port: Modbus stays on the internal "plant" network.
+
+  gateway:
+    <<: *sim
+    depends_on: [mosquitto, plc]
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "8883"
+      CERTS_DIR: /certs
+      INTERVAL_S: "5"
+      PLC_HOST: plc
+      PLC_PORT: "5020"
+    command: ["python", "-m", "iiot_sim.gateway"]

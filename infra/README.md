@@ -34,7 +34,7 @@ aws s3 cp infra/bootstrap/terraform.tfstate \
 ```
 
 ## Run the simulator against AWS (from scratch)
-Run from the repo root unless noted.
+Every step starts from the repo root. If unsure where you are: `cd ~/projects/iiot-secure-monitor`.
 
 **1. Python env** (first time only; skip if `.venv/` exists)
 ```bash
@@ -51,17 +51,18 @@ Check the account is the dedicated iiot account. If not, **stop**.
 
 **3. Check the infrastructure exists**
 ```bash
-cd infra/envs/dev
-ls backend.hcl || cp backend.hcl.example backend.hcl   # then fill in the account ID
-AWS_PROFILE=iiot terraform init -backend-config=backend.hcl
-AWS_PROFILE=iiot terraform plan
-cd ../../..
+cd ~/projects/iiot-secure-monitor
+ls infra/envs/dev/backend.hcl || cp infra/envs/dev/backend.hcl.example infra/envs/dev/backend.hcl
+# (if just copied, fill in the account ID)
+AWS_PROFILE=iiot terraform -chdir=infra/envs/dev init -backend-config=backend.hcl
+AWS_PROFILE=iiot terraform -chdir=infra/envs/dev plan
 ```
 Expect `No changes`. If it plans 36 creates (stack was destroyed), run
-`AWS_PROFILE=iiot terraform apply` and review before typing `yes`.
+`AWS_PROFILE=iiot terraform -chdir=infra/envs/dev apply` and review before typing `yes`.
 
 **4. Device keys and certificates**
 ```bash
+cd ~/projects/iiot-secure-monitor
 ./scripts/gen-aws-device-keys.sh               # prints "skip ..." if keys exist
 AWS_PROFILE=iiot ./scripts/fetch-aws-device-certs.sh
 ls local/aws-certs/
@@ -72,7 +73,7 @@ changed: re-run step 3's `apply` so AWS issues new certs, then fetch again.
 
 **5. Start three processes, one per terminal.** Paste this at the top of each:
 ```bash
-cd simulator
+cd ~/projects/iiot-secure-monitor/simulator
 export MQTT_HOST=$(terraform -chdir=../infra/envs/dev output -raw iot_endpoint)
 export CERTS_DIR=../local/aws-certs INTERVAL_S=5
 ```
@@ -86,6 +87,7 @@ user can't read them (intentional).
 
 **6. Check data arrives** (4th terminal)
 ```bash
+cd ~/projects/iiot-secure-monitor
 export AWS_PROFILE=iiot AWS_REGION=ap-south-1
 aws sqs get-queue-attributes --attribute-names ApproximateNumberOfMessages \
   --queue-url $(terraform -chdir=infra/envs/dev output -raw telemetry_queue_url)
@@ -96,7 +98,7 @@ Console alternative: **IoT Core → MQTT test client**, subscribe to `iiot/#`.
 
 **7. Security tests (optional).** Stop terminal 3 first: the tests connect as feeder-01.
 ```bash
-cd simulator
+cd ~/projects/iiot-secure-monitor/simulator
 IOT_ENDPOINT=$MQTT_HOST ../.venv/bin/pytest -m aws -v
 ```
 Expect 5 passed.

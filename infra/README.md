@@ -85,13 +85,15 @@ Expect `connected to ...amazonaws.com:8883`, then a reading per device about eve
 Run on the host, not Docker: keys are owner-only (`600`), so the container's non-root
 user can't read them (intentional).
 
-**6. Check data arrives** (4th terminal)
+**6. Check data arrives** (4th terminal; short lines, so pasting can't split them)
 ```bash
 cd ~/projects/iiot-secure-monitor
 export AWS_PROFILE=iiot AWS_REGION=ap-south-1
-aws sqs get-queue-attributes --attribute-names ApproximateNumberOfMessages \
-  --queue-url $(terraform -chdir=infra/envs/dev output -raw telemetry_queue_url)
-aws s3 ls s3://$(terraform -chdir=infra/envs/dev output -raw raw_bucket)/raw/ --recursive | tail -5
+Q=$(terraform -chdir=infra/envs/dev output -raw telemetry_queue_url)
+B=$(terraform -chdir=infra/envs/dev output -raw raw_bucket)
+echo "$Q  $B"    # blank means you're not in the repo root
+aws sqs get-queue-attributes --queue-url "$Q" --attribute-names ApproximateNumberOfMessages
+aws s3 ls "s3://$B/raw/" --recursive | tail -5
 ```
 The queue count rises about 1 per second; new `.json` objects appear per device.
 Console alternative: **IoT Core → MQTT test client**, subscribe to `iiot/#`.

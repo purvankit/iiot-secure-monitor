@@ -1,0 +1,109 @@
+# CI: runs on every pull request and every push to main. No AWS access at all (no id-token
+# permission), so nothing here can change infrastructure, even if a PR edits this file.
+#
+# Third-party actions are pinned to full commit SHAs: a tag can be moved to malicious code
+# (this happened to aquasecurity/trivy-action in March 2026, CVE-2026-33634); a SHA can't.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true # a newer push to the same branch makes the old run pointless
+
+jobs:
+  python:
+    name: lint + tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no git token left on disk for later steps
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            simulator/pyproject.toml
+            service/pyproject.toml
+            tests/requirements.txt
+      - name: Install
+        run: python -m pip install -e './simulator[dev]' -e './service[dev]' -r tests/requirements.txt
+      - name: Ruff
+        run: ruff check .
+      - name: Simulator tests
+        run: cd simulator && python -m pytest -q
+      - name: Service tests
+        run: cd service && python -m pytest -q
+      - name: Repo guardrails + attack scripts
+        run: python -m pytest -q tests --ignore=tests/spec
+      - name: Specs of finished milestones (M4 builds the image, needs Docker)
+        # Add each milestone here once it's done; unfinished specs are expected to be red.
+        run: python -m pytest -q tests/spec -m "m4 or m5"
+
+  terraform:
+    name: terraform fmt / validate / test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.tf-plugin-cache
+      # Modules have no committed lock file (only roots do); let them reuse the cached provider.
+      TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+      - name: Format
+        run: terraform fmt -recursive -check -diff .
+      - name: Validate roots (no backend, no AWS credentials)
+        run: |
+          for d in infra/bootstrap infra/envs/dev infra/ci; do
+            echo "::group::$d"
+            terraform -chdir="$d" init -backend=false
+            terraform -chdir="$d" validate
+            echo "::endgroup::"
+          done
+      - name: Module tests + frozen specs (mock provider, offline)
+        run: |
+          for d in infra/modules/*/ tests/spec/tf; do
+            echo "::group::$d"
+            terraform -chdir="$d" init -backend=false
+            terraform -chdir="$d" test
+            echo "::endgroup::"
+          done
+
+  image:
+    name: build + scan image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        # --provenance=false: a single image manifest. ECR can't scan an OCI index (M4 lesson).
+        run: docker build --provenance=false -t iiot-monitor:ci service
+      - name: Trivy (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0 # pin the scanner binary too (v0.69.4-0.69.6 were malicious)
+          image-ref: iiot-monitor:ci
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false # strict; accepted risks: see infra/README.md "Deploy through CI/CD"
+          exit-code: "1"
+          format: table

@@ -43,3 +43,9 @@ variable "vpc_cidr" {
   type    = string
   default = "10.20.0.0/16"
 }
+
+variable "permissions_boundary_arn" {
+  description = "Boundary (ceiling) for this module's IAM roles; created in infra/ci. null = none (tests)"
+  type        = string
+  default     = null
+}

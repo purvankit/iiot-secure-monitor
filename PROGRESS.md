@@ -8,8 +8,8 @@
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 AWS safety | Done | `iiot` profile = dedicated iiot account (ID in backend.hcl, not in git); $5 budget lives in the org management account |
-| M1 Simulator + PLC + gateway (local) | Done, committed `f4cd2aa` | 21 unit + 3 broker tests pass; guide in `simulator/README.md` |
-| M2 IoT Core, SQS, S3 (Terraform) | Done, committed `044bfc9` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
+| M1 Simulator + PLC + gateway (local) | Done, committed `82a3091` | 21 unit + 3 broker tests pass; guide in `simulator/README.md` |
+| M2 IoT Core, SQS, S3 (Terraform) | Done, committed `788bf24` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
 | M3 Detection service + DynamoDB + SNS | Done (2026-11-26) | 58 tests pass; live: 0 false alerts on 90-msg baseline, all 6 attack types detected; results + limitations in `service/README.md` |
 | M4 Containerise, ECR + ECS Fargate, CloudWatch | Done (2026-11-26) | M4 specs green; live: 47/47 msgs stored by the Fargate task, 0 alerts; forced error → both alarms → SNS |
 | **M5 GitHub Actions** | **Next** | see below |
@@ -17,7 +17,7 @@
 
 ## M4 results (2026-11-26)
 
-Live test, worker on Fargate with the least-privilege task role, image `dev-0777c8f-dirty-2`
+Live test, worker on Fargate with the least-privilege task role, image `dev-0777c8f-dirty-2` (0777c8f = `2a42f6d` after the 2026-11-26 email rewrite)
 (built from uncommitted M4 code; CI tags will be clean SHAs):
 - Task reached RUNNING + HEALTHY; first deploy 4 polls of 15 s, image-swap rollout ~3.5 min
   (old task stops first, by design).

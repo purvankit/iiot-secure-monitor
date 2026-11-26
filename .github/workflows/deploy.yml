@@ -1,0 +1,138 @@
+# Deploy: AWS access through OIDC (short-lived credentials, no stored keys), two roles.
+#
+#   pull request      -> plan   (github-iiot-plan: read-only; shows what a merge would change)
+#   push to main      -> deploy (github-iiot-apply: waits for approval in the protected `dev`
+#   "Run workflow"       environment, then build -> scan -> push image -> terraform apply)
+#
+# desired_count: a push to main always applies 0 (cost-safe: Fargate bills per hour).
+# A demo is "Actions -> deploy -> Run workflow -> desired_count 1", then again with 0.
+# CI is the only thing that applies infra/envs/dev; don't apply it from a laptop any more.
+name: deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      desired_count:
+        description: "Worker tasks (1 = demo, bills ~$0.02/h; 0 = off)"
+        type: choice
+        options: ["0", "1"]
+        default: "0"
+
+permissions:
+  contents: read
+  id-token: write # lets the job request GitHub's OIDC token; useless without a matching AWS role
+
+# One deploy at a time per target (two applies racing could corrupt state or deploy out of
+# order). PR plans get a group per PR, so they don't queue behind a deploy awaiting approval.
+concurrency:
+  group: deploy-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
+  cancel-in-progress: false # never kill a running apply halfway
+
+env:
+  AWS_REGION: ap-south-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TF_DIR: infra/envs/dev
+
+jobs:
+  plan:
+    name: terraform plan (read-only)
+    # Fork PRs get no OIDC token or secrets; skip instead of failing.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: gha-plan-${{ github.run_id }}
+          mask-aws-account-id: true # public repo: logs are public too
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - name: Init
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+        run: terraform -chdir="$TF_DIR" init -backend-config="bucket=$TF_STATE_BUCKET"
+      - name: Plan
+        env:
+          TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }} # sensitive variable: shown as (sensitive value)
+          IMAGE_TAG: ${{ github.event.pull_request.head.sha }}
+        run: |
+          terraform -chdir="$TF_DIR" plan -lock-timeout=5m -no-color -var "image_tag=$IMAGE_TAG" | tee plan.txt
+          { echo '### terraform plan'; grep -E '^(Plan:|No changes)' plan.txt; } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: build, scan, push, apply
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: dev # protected: a reviewer must approve before this job gets the apply role
+    env:
+      IMAGE_TAG: ${{ github.sha }} # immutable ECR tag = the exact commit the image was built from
+      DESIRED_COUNT: ${{ inputs.desired_count || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }} # a secret of the `dev` environment only
+          aws-region: ap-south-1
+          role-session-name: gha-apply-${{ github.run_id }}
+          mask-aws-account-id: true
+      - name: Locate image
+        id: img
+        run: |
+          acct=$(aws sts get-caller-identity --query Account --output text)
+          echo "repo=$acct.dkr.ecr.$AWS_REGION.amazonaws.com/iiot-monitor" >> "$GITHUB_OUTPUT"
+          # Re-runs and "Run workflow" on an already-deployed commit reuse its image
+          # (tags are immutable, so pushing the same tag again would fail anyway).
+          if aws ecr describe-images --repository-name iiot-monitor --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        if: steps.img.outputs.exists == 'false'
+        run: docker build --provenance=false -t "${{ steps.img.outputs.repo }}:$IMAGE_TAG" service
+      - name: Trivy gate (the pushed image is the scanned image)
+        if: steps.img.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          image-ref: ${{ steps.img.outputs.repo }}:${{ github.sha }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+          format: table
+      - name: Push
+        if: steps.img.outputs.exists == 'false'
+        env:
+          REPO: ${{ steps.img.outputs.repo }}
+        run: |
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
+          docker push "$REPO:$IMAGE_TAG"
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - name: Init
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+        run: terraform -chdir="$TF_DIR" init -backend-config="bucket=$TF_STATE_BUCKET"
+      - name: Apply
+        env:
+          TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+        run: |
+          terraform -chdir="$TF_DIR" apply -auto-approve -lock-timeout=5m -no-color -var "image_tag=$IMAGE_TAG" -var "desired_count=$DESIRED_COUNT"
+          echo "### deployed \`$IMAGE_TAG\` with desired_count=$DESIRED_COUNT" >> "$GITHUB_STEP_SUMMARY"

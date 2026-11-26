@@ -13,6 +13,9 @@ on:
   pull_request:
   push:
     branches: [main]
+    # Docs-only merges have nothing to deploy. NOT on pull_request: `plan` is a required
+    # check, and a PR that never runs it could never be merged.
+    paths-ignore: ["**.md"]
   workflow_dispatch:
     inputs:
       desired_count:

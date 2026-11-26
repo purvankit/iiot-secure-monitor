@@ -1,6 +1,8 @@
 # CLAUDE.md: Secure Industrial IoT Monitoring Platform on AWS
 
 > Project instructions for Claude Code. Personal context (background, job-search goals, resume) lives in `~/.claude/CLAUDE.md`, outside this repo.
+>
+> **Current state, next steps and lessons learned: read `PROGRESS.md` first** and update it at the end of each session.
 
 ## Working rules
 - Explain the *why* behind every design decision; the owner must be able to defend it in interviews.

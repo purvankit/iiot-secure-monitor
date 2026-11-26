@@ -233,3 +233,7 @@ infra/envs/*/backend.hcl
 # AWS device certs/keys (CSRs in infra/envs/dev/device-csrs are public and committed)
 local/aws-certs/
 infra/envs/*/terraform.tfvars
+
+# Lock files for test-only roots and reusable modules (envs/* and bootstrap locks are committed)
+infra/modules/*/.terraform.lock.hcl
+tests/spec/tf/.terraform.lock.hcl

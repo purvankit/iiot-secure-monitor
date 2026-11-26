@@ -16,6 +16,7 @@
 
 ## Next: M4 (containerise + Fargate)
 
+0. Make `tests/spec -m m4` and the tf spec green; don't edit the spec to fit the code.
 1. `service/Dockerfile` (non-root, slim). Production deps only (no `botocore[crt]`).
 2. Terraform `modules/compute`: ECR repo (scan on push), ECS cluster, Fargate task
    0.25 vCPU/0.5 GB in a **public subnet, public IP, no inbound rules, no NAT** (CLAUDE.md),
@@ -29,6 +30,28 @@
 
 Open M3 follow-ups (documented, not blocking): persist the replay seen-window across restarts;
 CloudWatch Logs subscription for faster auth-failure alerts.
+
+## Tests (how to know nothing is broken)
+
+| Suite | Command (from repo root) | State now |
+|---|---|---|
+| Simulator | `cd simulator && ../.venv/bin/pytest -q` | 21 pass |
+| Service | `cd service && ../.venv/bin/pytest -q` | 66 pass |
+| Repo guardrails + attacks | `.venv/bin/pytest -q tests --ignore=tests/spec` | 25 pass |
+| Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts | 12 pass |
+| **M4 spec** | `.venv/bin/pytest -q tests/spec -m m4` + `terraform -chdir=tests/spec/tf test` (compute runs) | red until M4 is built |
+| **M5 spec** | `.venv/bin/pytest -q tests/spec -m m5` + tf spec (ci_oidc runs) | red until M5 |
+| **M6 spec** | `.venv/bin/pytest -q tests/spec -m m6` | red until M6 |
+
+Spec tests were written BEFORE M4-M6 and are frozen (rule in CLAUDE.md). Each was checked on
+2026-11-26 to be satisfiable (a throwaway prototype in the scratchpad passed it, then was deleted)
+and non-vacuous (deliberately broken prototypes failed it). They fix interfaces M4/M5 must follow:
+module `infra/modules/compute` (resources `aws_ecs_service.worker`, `aws_ecs_task_definition.worker`,
+`aws_security_group.worker`, `aws_ecr_repository.service`, `aws_iam_role.{task,execution}`,
+`aws_iam_role_policy.task`, alarms `processing_errors` + `dlq_not_empty`, `aws_cloudwatch_dashboard.main`;
+variables in the spec file), module `infra/modules/ci_oidc` (`plan`/`apply` roles), workflows
+`.github/workflows/{ci,deploy}.yml`, `dashboards/*.json`, README sections.
+Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (reason)`.
 
 ## Lessons learned (don't repeat these)
 

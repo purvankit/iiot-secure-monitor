@@ -8,6 +8,7 @@
 - Explain the *why* behind every design decision; the owner must be able to defend it in interviews.
 - Never invent metrics or features in docs/README; only document what is built and measured.
 - Keep scope to v1 below; propose additions only with a clear reason.
+- **Spec tests come first and are frozen.** `tests/spec/` holds each milestone's tests, written before the code (2026-11-26). A milestone is done only when its spec is green. Never weaken, skip or delete a spec assertion without the owner's explicit approval; adding assertions is fine. Every change to `tests/spec/` must be called out to the owner (audit: `git log -p tests/spec`).
 - Cost safety first: no NAT gateways, no EKS, no idle load balancers; tag everything `project=iiot-secure-monitor`.
 - AWS: use the dedicated account/project and CLI profile for this project only. Never deploy into the existing "building things" account or project.
 - AWS CLI profile is `iiot` (credentials via `aws login`). The profile's region is us-east-1 only because `aws login` failed against the ap-south-1 sign-in endpoint. Every project resource goes in **ap-south-1**: pin `region = "ap-south-1"` in the Terraform provider and pass `--region ap-south-1` (or set `AWS_REGION=ap-south-1`) on CLI/SDK calls. Never rely on the profile default.

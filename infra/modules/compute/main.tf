@@ -126,8 +126,9 @@ locals {
 # the log stream. Written by hand instead of AmazonECSTaskExecutionRolePolicy, which allows
 # every repo and every log group in the account.
 resource "aws_iam_role" "execution" {
-  name               = "${local.name}-execution"
-  assume_role_policy = local.ecs_tasks_trust
+  name                 = "${local.name}-execution"
+  permissions_boundary = var.permissions_boundary_arn
+  assume_role_policy   = local.ecs_tasks_trust
 }
 
 resource "aws_iam_role_policy" "execution" {
@@ -162,8 +163,9 @@ resource "aws_iam_role_policy" "execution" {
 #   worker.load_registry  iot:ListThings
 #   authlog.AuthLogPoller logs:FilterLogEvents
 resource "aws_iam_role" "task" {
-  name               = "${local.name}-task"
-  assume_role_policy = local.ecs_tasks_trust
+  name                 = "${local.name}-task"
+  permissions_boundary = var.permissions_boundary_arn
+  assume_role_policy   = local.ecs_tasks_trust
 }
 
 resource "aws_iam_role_policy" "task" {

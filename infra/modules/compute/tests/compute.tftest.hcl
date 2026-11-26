@@ -59,3 +59,13 @@ run "execution_role_scoped_to_our_repo_and_log_group" {
     error_message = "trust policy needs the confused-deputy guard"
   }
 }
+
+run "both_roles_carry_the_boundary" {
+  command = apply
+  variables { permissions_boundary_arn = "arn:aws:iam::123456789012:policy/iiot-workload-boundary" }
+  assert {
+    condition = (aws_iam_role.task.permissions_boundary == "arn:aws:iam::123456789012:policy/iiot-workload-boundary"
+    && aws_iam_role.execution.permissions_boundary == "arn:aws:iam::123456789012:policy/iiot-workload-boundary")
+    error_message = "CI may only manage roles that carry the workload boundary"
+  }
+}

@@ -20,6 +20,14 @@ provider "aws" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
+locals {
+  # Ceiling for every project role. Created by infra/ci (apply that root first); the CI
+  # apply role may only create/modify roles that carry exactly this boundary.
+  boundary_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/iiot-workload-boundary"
+}
+
 locals {
   # Single source of truth: the simulator's device list, plus the edge gateway.
   sim_devices = jsondecode(file("${path.root}/../../../simulator/config/devices.json")).devices
@@ -30,13 +38,15 @@ locals {
 }
 
 module "iot" {
-  source  = "../../modules/iot"
-  devices = local.devices
-  csr_dir = "${path.root}/device-csrs"
+  source                   = "../../modules/iot"
+  permissions_boundary_arn = local.boundary_arn
+  devices                  = local.devices
+  csr_dir                  = "${path.root}/device-csrs"
 }
 
 module "ingest" {
-  source = "../../modules/ingest"
+  source                   = "../../modules/ingest"
+  permissions_boundary_arn = local.boundary_arn
 }
 
 module "data" {
@@ -78,7 +88,8 @@ variable "image_tag" {
 }
 
 module "compute" {
-  source = "../../modules/compute"
+  source                   = "../../modules/compute"
+  permissions_boundary_arn = local.boundary_arn
   # The ECR repo doesn't depend on image_uri, so feeding the module its own output is no cycle.
   image_uri         = "${module.compute.repository_url}:${var.image_tag}"
   desired_count     = var.desired_count

@@ -58,3 +58,6 @@ mock_resource "aws_kms_key" {
 mock_resource "aws_ecs_service" {
   defaults = { id = "arn:aws:ecs:ap-south-1:123456789012:service/mock/mock" }
 }
+mock_resource "aws_iam_policy" {
+  defaults = { arn = "arn:aws:iam::123456789012:policy/mock" }
+}

@@ -1,2 +1,4 @@
 pytest>=8
 pyyaml>=6
+# Pinned: new ruff releases add default rules and would turn CI red without a code change.
+ruff==0.17.5

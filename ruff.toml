@@ -1,0 +1,7 @@
+# Repo-wide lint settings for code outside service/ and simulator/ (tests/, attacks/).
+# Same rules as those packages' pyproject.toml, so `ruff check .` from the root (CI) is
+# consistent. Without this, new ruff releases apply their own growing default rule set.
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "B", "UP"]

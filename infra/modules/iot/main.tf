@@ -83,7 +83,8 @@ resource "aws_cloudwatch_log_group" "iot" {
 }
 
 resource "aws_iam_role" "iot_logging" {
-  name = "iiot-iot-logging"
+  name                 = "iiot-iot-logging"
+  permissions_boundary = var.permissions_boundary_arn
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

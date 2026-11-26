@@ -108,7 +108,50 @@ Expect 5 passed.
 **8. Stop.** Ctrl+C in terminals 1-3. Nothing in M2 bills hourly, so cost stops with the
 simulator. Remove everything: `AWS_PROFILE=iiot terraform -chdir=infra/envs/dev destroy`.
 
-## Run the detection service on Fargate (M4)
+## Deploy through CI/CD (M5, the normal way)
+
+```
+PR opened  -> ci.yml: ruff, pytest (3 suites + finished specs), terraform fmt/validate/test,
+              docker build + Trivy (fails on HIGH/CRITICAL)
+           -> deploy.yml "plan": terraform plan with the read-only role (summary on the run page)
+merge      -> deploy.yml "deploy": waits for YOUR approval (environment `dev`), then
+              build -> Trivy -> push image tagged with the commit SHA -> terraform apply (0 tasks)
+```
+`main` is protected: it only changes through a PR whose checks passed, so every deploy
+ships tested code. Approve on GitHub: the run page shows **Review deployments** (works in
+the phone app too).
+
+**Demo (start/stop the worker):** GitHub → Actions → **deploy** → **Run workflow** →
+`desired_count` = `1` → approve. Stop the same way with `0`. Fargate bills per hour, and the
+next merge resets it to 0 anyway.
+
+**Rules now:**
+- Don't `terraform apply` `infra/envs/dev` from the laptop any more (CI owns it; a laptop
+  apply without `-var image_tag=<deployed sha>` would point the task at a missing image).
+  Read-only `plan` locally is fine.
+- `infra/ci` (OIDC provider, CI roles, permissions boundary) is the exception: only the
+  owner applies it, from the laptop. CI must never be able to change its own permissions.
+- A new AWS call in the worker needs: the task-role policy (`modules/compute`), AND the
+  workload boundary (`modules/ci_oidc`, applied from the laptop first). Otherwise AccessDenied.
+- A HIGH/CRITICAL CVE with no fix yet will turn CI red. Don't loosen the gate: if the risk is
+  acceptable, create `.trivyignore.yaml` with the CVE `id`, a `statement` (why) and
+  `expired_at`, and add `trivyignores: .trivyignore.yaml` to both Trivy steps, in a PR, so
+  the decision is reviewed and expires. (Not needed yet: 0 HIGH/CRITICAL on 2026-11-26.)
+
+**One-time setup (done 2026-11-26; repeat only for a new account or repo):**
+```bash
+cd ~/projects/iiot-secure-monitor
+export AWS_PROFILE=iiot AWS_REGION=ap-south-1
+terraform -chdir=infra/ci init -backend-config=../envs/dev/backend.hcl
+terraform -chdir=infra/ci apply
+```
+Then in GitHub: environment `dev` (required reviewer = you, deployment branches = `main`),
+repository secrets `AWS_PLAN_ROLE_ARN`, `TF_STATE_BUCKET`, `ALERT_EMAIL`, and the `dev`
+environment secret `AWS_APPLY_ROLE_ARN` (values from `terraform -chdir=infra/ci output`,
+`backend.hcl` and `terraform.tfvars`). Secrets keep the account ID out of the public repo;
+the workflows also mask it in logs.
+
+## Run the detection service on Fargate by hand (M4; break-glass only since M5)
 Fargate bills per task-hour (~$0.012/h at the indicative us-east-1 rate in CLAUDE.md, plus $0.005/h for the public IPv4), so the service
 sits at `desired_count = 0` and only runs while you demo. Every step starts from the repo root.
 

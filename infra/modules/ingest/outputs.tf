@@ -13,3 +13,7 @@ output "dlq_url" {
 output "raw_bucket" {
   value = aws_s3_bucket.raw.bucket
 }
+
+output "dlq_name" {
+  value = aws_sqs_queue.dlq.name
+}

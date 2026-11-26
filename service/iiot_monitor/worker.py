@@ -130,7 +130,9 @@ def serve_http(port: int) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    region = os.environ["AWS_REGION"]  # required: never fall back to a profile default
+    region = os.getenv("AWS_REGION")
+    if not region:  # required: never fall back to a profile/default region (CLAUDE.md)
+        raise SystemExit("AWS_REGION is required (the platform runs in ap-south-1)")
     s = boto3.session.Session(region_name=region)
     iot, sqs, sns = s.client("iot"), s.client("sqs"), s.client("sns")
     store = Store(s.resource("dynamodb"), os.environ["TABLE_READINGS"],

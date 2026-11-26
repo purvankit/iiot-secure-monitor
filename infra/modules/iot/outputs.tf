@@ -12,3 +12,8 @@ output "certificate_pems" {
 output "thing_names" {
   value = [for t in aws_iot_thing.device : t.name]
 }
+
+output "log_group_arn" {
+  description = "AWSIotLogsV2 (auth failures, read by detection rule R1)"
+  value       = aws_cloudwatch_log_group.iot.arn
+}

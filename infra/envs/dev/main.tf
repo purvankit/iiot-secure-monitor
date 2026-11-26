@@ -53,6 +53,68 @@ module "alerts" {
   alert_email = var.alert_email
 }
 
+# ---------------- compute (M4): the detection service on ECS Fargate ----------------
+# Demo:   terraform apply -var image_tag=<git sha> -var desired_count=1
+# After:  terraform apply -var image_tag=<same sha> -var desired_count=0   (Fargate bills per hour)
+
+variable "desired_count" {
+  description = "Worker tasks to run: 0 (default, no Fargate cost) or 1 while demoing"
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.desired_count == 0 || var.image_tag != "none"
+    error_message = "desired_count > 0 needs -var image_tag=<sha of an image pushed to ECR>"
+  }
+}
+
+variable "image_tag" {
+  description = "Image tag in ECR = the git commit SHA it was built from (CI passes it in M5)"
+  type        = string
+  default     = "none"
+  validation {
+    condition     = var.image_tag != "latest"
+    error_message = "use an immutable commit SHA, never 'latest'"
+  }
+}
+
+module "compute" {
+  source = "../../modules/compute"
+  # The ECR repo doesn't depend on image_uri, so feeding the module its own output is no cycle.
+  image_uri         = "${module.compute.repository_url}:${var.image_tag}"
+  desired_count     = var.desired_count
+  queue_arn         = module.ingest.queue_arn
+  queue_url         = module.ingest.queue_url
+  dlq_name          = module.ingest.dlq_name
+  alert_topic_arn   = module.alerts.topic_arn
+  iot_log_group_arn = module.iot.log_group_arn
+  table_names = {
+    readings = module.data.readings_table
+    latest   = module.data.latest_table
+    alerts   = module.data.alerts_table
+  }
+  table_arns = module.data.table_arns
+}
+
+output "ecr_repository_url" {
+  value = module.compute.repository_url
+}
+
+output "ecs_cluster" {
+  value = module.compute.cluster_name
+}
+
+output "ecs_service" {
+  value = module.compute.service_name
+}
+
+output "worker_log_group" {
+  value = module.compute.log_group_name
+}
+
+output "worker_task_role" {
+  value = module.compute.task_role_name
+}
+
 # Environment for the detection service (`eval "$(terraform output -raw service_env)"`).
 output "service_env" {
   value = join("\n", [

@@ -1,0 +1,8 @@
+# Build context = service/. Only pyproject.toml and iiot_monitor/ are needed.
+tests/
+**/__pycache__/
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+*.key
+*.pem

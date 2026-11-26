@@ -108,6 +108,49 @@ Expect 5 passed.
 **8. Stop.** Ctrl+C in terminals 1-3. Nothing in M2 bills hourly, so cost stops with the
 simulator. Remove everything: `AWS_PROFILE=iiot terraform -chdir=infra/envs/dev destroy`.
 
+## Run the detection service on Fargate (M4)
+Fargate bills per task-hour (~$0.012/h at the indicative us-east-1 rate in CLAUDE.md, plus $0.005/h for the public IPv4), so the service
+sits at `desired_count = 0` and only runs while you demo. Every step starts from the repo root.
+
+**1. Build and push the image.** Tags are immutable: one tag per build, never `latest`.
+```bash
+cd ~/projects/iiot-secure-monitor
+export AWS_PROFILE=iiot AWS_REGION=ap-south-1
+REPO=$(terraform -chdir=infra/envs/dev output -raw ecr_repository_url)
+TAG=$(git rev-parse --short HEAD)
+aws ecr get-login-password | docker login --username AWS --password-stdin ${REPO%%/*}
+docker build --provenance=false -t $REPO:$TAG service
+docker push $REPO:$TAG
+```
+`--provenance=false` matters: without it BuildKit pushes an OCI *index* (image + attestation),
+which ECR basic scanning can't scan (`UnsupportedImageTypeException`), and scan-on-push
+silently does nothing. If that tag already holds a different image, `docker push` fails ("tag invalid"):
+that is immutability working; build from a new commit.
+
+**2. Check the scan** (findings are in the base image's Debian packages, not our code):
+```bash
+aws ecr describe-image-scan-findings --repository-name iiot-monitor --image-id imageTag=$TAG --query imageScanFindings.findingSeverityCounts
+```
+
+**3. Start one worker** (review the plan before typing `yes`):
+```bash
+terraform -chdir=infra/envs/dev apply -var image_tag=$TAG -var desired_count=1
+aws ecs describe-services --cluster iiot --services iiot-worker --query 'services[0].deployments[0].[rolloutState,runningCount]'
+aws logs tail /ecs/iiot-worker --follow
+```
+Expect `COMPLETED 1` after ~2-4 min and a `registry: [...]` log line. Then run the simulator
+(previous section, step 5): readings land in DynamoDB with no laptop credentials involved.
+
+**4. Stop it** (same tag, so only the count changes):
+```bash
+terraform -chdir=infra/envs/dev apply -var image_tag=$TAG -var desired_count=0
+```
+
+**Alarms** (all email the `iiot-alerts` topic): `iiot-worker-processing-errors` (a
+`processing failed` log line), `iiot-worker-dlq-not-empty` (a message failed 5 times),
+`iiot-worker-not-running` (exists only while `desired_count = 1`). Dashboard: CloudWatch →
+Dashboards → `iiot-secure-monitor`.
+
 ## Known limitation
 Clients with no valid certificate fail during the TLS handshake, before IoT Core sees an
 MQTT client ID, so these attempts are blocked but not logged or attributable to a device.

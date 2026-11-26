@@ -1,7 +1,7 @@
 # PROGRESS.md: project state for new sessions
 
 > Read this first, then `CLAUDE.md` (the brief). Update this file at the end of every session.
-> Last updated: 2026-11-26 (M4 done).
+> Last updated: 2026-11-26 (M5 done).
 
 ## Status at a glance
 
@@ -12,8 +12,9 @@
 | M2 IoT Core, SQS, S3 (Terraform) | Done, committed `788bf24` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
 | M3 Detection service + DynamoDB + SNS | Done (2026-11-26) | 58 tests pass; live: 0 false alerts on 90-msg baseline, all 6 attack types detected; results + limitations in `service/README.md` |
 | M4 Containerise, ECR + ECS Fargate, CloudWatch | Done (2026-11-26) | M4 specs green; live: 47/47 msgs stored by the Fargate task, 0 alerts; forced error → both alarms → SNS |
-| **M5 GitHub Actions** | **Next** | see below |
-| M6, S1 | Not started | see CLAUDE.md §6 |
+| M5 GitHub Actions (CI/CD, OIDC) | Done (2026-11-26), PR #1 → `ec27e0f` | ci + deploy green on main; merge → approve → build/scan/push/apply; boundary verified live (see below) |
+| **M6 Dashboards, attack demos, README** | **Next** | see below |
+| S1 | Not started | see CLAUDE.md §6 |
 
 ## M4 results (2026-11-26)
 
@@ -29,16 +30,36 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 - ECR basic scan of the image: 9 HIGH, 5 MEDIUM, 2 UNDEFINED. All 9 HIGH are Debian `openssl`
   3.5.9-1~deb13u1 in `python:3.12-slim`, with no fixed package available yet (checked 2026-11-26).
 
-## Next: M5 (GitHub Actions)
+## M5 results (2026-11-26)
 
-0. Make `tests/spec -m m5` + `tests/spec/tf/tests/m5_ci_oidc.tftest.hcl` green (module `infra/modules/ci_oidc`).
-1. **Decide with owner before writing ci.yml:** the frozen spec's Trivy step fails on HIGH, and the
-   base image has 9 unfixed HIGH openssl CVEs. Options: `ignore-unfixed: true` (allowed, spec only
-   fixes severity + exit-code), or a different base image (distroless/Chainguard). Don't edit the spec.
-2. Push with `provenance: false` (docker/build-push-action) or ECR can't scan it (see lessons).
-3. Ruff from the repo root reports 6 pre-existing issues in `tests/spec/*` and `tests/test_guardrails.py`
-   (RUF017, FURB167), which matter once CI runs ruff. Spec files are frozen: ask the owner, or scope ruff config.
-4. ECS deploy in CI = `terraform apply -var image_tag=${{ github.sha }}`; keep `desired_count` 0 by default.
+- Decisions (owner, with pros/cons): Alpine + `apk upgrade` with a strict Trivy gate; apply role =
+  PowerUser + IAM only on `iiot-*` roles carrying the workload permissions boundary; commit emails
+  rewritten to the GitHub noreply address (unpushed commits only; `eb5692d` still shows the Gmail);
+  strict `protect-main` ruleset (PR + 4 checks, no bypass); squash merges.
+- Trivy 0.70 HIGH/CRITICAL: python:3.12-slim 54 (53 unfixed), slim + apt upgrade 53 (all unfixed),
+  python:3.12-alpine 16 (all krb5-libs, fixed), Alpine + apk upgrade **0**. ECR basic scan of the
+  CI-built image `ec27e0f`: COMPLETE, 0 findings.
+- PR #1 first run: CI 3/3 green; plan failed AssumeRoleWithWebIdentity (immutable OIDC subject, see
+  lessons), fixed in `infra/ci`, re-run 4/4 green. Plan logs: 0 unmasked account IDs.
+- Merge → deploy waited for approval → image pushed (single manifest) → apply 1 add/1 change/1 destroy
+  (new task definition revision), service stayed at 0.
+- Boundary live checks: telemetry 22 → SQS 22 (+1 from tests) + S3 22, rule errors 0; IoT auth
+  failures logged (3), 5 AWS security tests pass; demo via Run workflow (desired_count 1): task
+  HEALTHY on the CI image, registry loaded, 24 published → 24 readings, queue drained; 1 malformed
+  message → `R0.malformed` alert → "emailed" (task role → KMS-encrypted SNS works). Scaled back to 0.
+
+## Next: M6 (dashboards, attack demos, README)
+
+0. Make `tests/spec -m m6` green; then add `m6` to the spec step in `.github/workflows/ci.yml`.
+1. Everything goes through PRs now (main is protected): branch → PR → checks → squash merge.
+2. Grafana dashboards (`dashboards/*.json`) may only query metrics `worker.py` exports
+   (`iiot_messages_total`, `iiot_alerts_total`, `iiot_processing_seconds_*`).
+3. README sections: architecture, threat model, IEC 62443 table (FR/SR numbers), cost, demo GIF,
+   limitations. No "100%" / "accuracy" claims (spec); only measured numbers.
+4. Attack demo against the Fargate worker: Run workflow desired_count 1 → `attacks/run_attack.py all`
+   (stop the simulator first) → Run workflow 0. Expect ~1 email per (device, rule) per 5 min.
+5. Local cleanup the owner may do: delete branch `backup/pre-email-rewrite` (holds the Gmail
+   commits; never push it) and the merged `m5-ci` / `m5-progress` branches.
 
 ## Tests (how to know nothing is broken)
 
@@ -47,9 +68,9 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 | Simulator | `cd simulator && ../.venv/bin/pytest -q` | 21 pass |
 | Service | `cd service && ../.venv/bin/pytest -q` | 66 pass |
 | Repo guardrails + attacks | `.venv/bin/pytest -q tests --ignore=tests/spec` | 25 pass |
-| Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts, compute | 17 pass |
-| M4 spec | `.venv/bin/pytest -q tests/spec -m m4` (needs Docker) + tf spec | 12 + 7 pass. `terraform test` loads ALL spec files, so until ci_oidc exists run m4 from a scratch copy (symlink `infra`, copy main.tf + m4 file) |
-| **M5 spec** | `.venv/bin/pytest -q tests/spec -m m5` + tf spec (ci_oidc runs) | red until M5 |
+| Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts, compute, ci_oidc | 25 pass |
+| M4 + M5 specs | `.venv/bin/pytest -q tests/spec -m "m4 or m5"` (needs Docker) + `terraform -chdir=tests/spec/tf test` | 27 + 10 pass |
+| CI (all of the above) | GitHub Actions `ci` on every PR/push; `deploy` plans on PRs | green on `ec27e0f` |
 | **M6 spec** | `.venv/bin/pytest -q tests/spec -m m6` | red until M6 |
 
 Spec tests were written BEFORE M4-M6 and are frozen (rule in CLAUDE.md). Each was checked on
@@ -63,6 +84,17 @@ variables in the spec file), module `infra/modules/ci_oidc` (`plan`/`apply` role
 Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (reason)`.
 
 ## Lessons learned (don't repeat these)
+
+- **GitHub OIDC `sub` may use the immutable form** `repo:owner@ownerId/name@repoId:...` (repo setting
+  `use_immutable_subject`). A trust policy on `repo:owner/name:...` fails with "Not authorized to
+  perform sts:AssumeRoleWithWebIdentity". Check `gh api repos/OWNER/NAME/actions/oidc/customization/sub`.
+  That error = trust-condition mismatch, not missing permissions.
+- **Pin actions to SHAs and the Trivy binary version**: trivy-action tags were hijacked in March 2026
+  (CVE-2026-33634; v0.69.4-0.69.6 binaries malicious). Pinned: trivy-action v0.36.0 `ed142fd`, Trivy v0.70.0.
+- **New ruff releases add default rules**: root `ruff.toml` fixes the rule set, `tests/requirements.txt` pins ruff.
+- Don't apply `infra/envs/dev` from the laptop any more (CI owns it). `infra/ci` is owner-only, laptop-only.
+- A new AWS call in the worker needs the task-role policy AND the boundary (`modules/ci_oidc`, apply
+  `infra/ci` first), or it gets AccessDenied in AWS while all offline tests pass.
 
 - **CloudWatch alarms can't publish to an SNS topic encrypted with `alias/aws/sns`** (its key
   policy can't be edited), so the alarm goes to ALARM and no email is sent. Fixed: customer-managed key
@@ -122,6 +154,10 @@ Gitignored, never commit: `local/certs/`, `local/aws-certs/`, `*.key`, `infra/en
 - M4 (+25 resources): customer KMS key for the alerts topic (~$1/month, the only fixed cost), VPC `10.20.0.0/16` with
   2 public subnets + IGW (free), ECR `iiot-monitor` (2 tags, storage cents), ECS cluster `iiot` +
   service `iiot-worker` at **desired_count 0**, log group `/ecs/iiot-worker` (7 d), 2 alarms, dashboard.
+- M5 `infra/ci` (state key `ci/terraform.tfstate`, 8 resources, free): GitHub OIDC provider, roles
+  `github-iiot-plan` / `github-iiot-apply`, policy `iiot-workload-boundary` (attached to the 4 project roles).
+- GitHub: environment `dev` (required reviewer = owner, branch `main`), secrets `AWS_PLAN_ROLE_ARN`,
+  `TF_STATE_BUCKET`, `ALERT_EMAIL` + env secret `AWS_APPLY_ROLE_ARN`, ruleset `protect-main`.
 - Nothing bills hourly while desired_count = 0. Run guide: `infra/README.md` → "Run the detection service on Fargate".
 
 ## Run the service (local, against real AWS)
@@ -140,3 +176,4 @@ Simulator against AWS: `infra/README.md` → "Run the simulator against AWS".
 - Uses a phone sometimes: give short, paste-safe commands that start with an absolute `cd`
   (no `\` line continuations). New WSL tabs open in `/mnt/c/Users/Purvankit`, not `~`.
 - Confirm before `terraform apply`, commits, deletes, or anything that sends email.
+- Wants pros/cons for every real choice (2026-11-26) and a recommendation. Deploy approvals are done by the owner on GitHub (never approve on their behalf).

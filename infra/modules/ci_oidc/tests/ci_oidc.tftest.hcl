@@ -68,3 +68,12 @@ run "rejects_wildcard_repo" {
   variables { github_repo = "example-owner/*" }
   expect_failures = [var.github_repo]
 }
+
+run "accepts_immutable_subject_form" {
+  command = plan
+  variables { github_repo = "example-owner@1234/iiot-secure-monitor@5678" }
+  assert {
+    condition     = strcontains(aws_iam_role.apply.assume_role_policy, "repo:example-owner@1234/iiot-secure-monitor@5678:environment:dev")
+    error_message = "immutable-subject repos (owner@id/name@id) must produce the matching sub"
+  }
+}

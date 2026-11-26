@@ -27,8 +27,12 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 variable "github_repo" {
+  # Immutable subject (owner@ownerId/name@repoId): this repo has use_immutable_subject = true,
+  # so GitHub's OIDC `sub` carries numeric IDs. If the repo were deleted and someone re-created
+  # one with the same name, its IDs would differ and it could NOT assume these roles.
+  # The IDs are public (GitHub API), not secrets. Verify: gh api repos/purvankit/iiot-secure-monitor/actions/oidc/customization/sub
   type    = string
-  default = "purvankit/iiot-secure-monitor"
+  default = "purvankit@92218305/iiot-secure-monitor@1458653446"
 }
 
 module "ci_oidc" {

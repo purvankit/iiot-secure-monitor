@@ -1,9 +1,14 @@
 variable "github_repo" {
-  description = "owner/name of the only repository whose workflows may assume these roles"
+  description = <<-EOT
+    The only repository whose workflows may assume these roles, exactly as it appears in the
+    OIDC `sub` claim: "owner/name", or with GitHub's immutable subject format (repo setting
+    use_immutable_subject) "owner@ownerId/name@repoId". Check with:
+      gh api repos/OWNER/NAME/actions/oidc/customization/sub
+  EOT
   type        = string
   validation {
-    condition     = can(regex("^[\\w.-]+/[\\w.-]+$", var.github_repo))
-    error_message = "exactly one repo as owner/name, no wildcards"
+    condition     = can(regex("^[\\w.-]+(@\\d+)?/[\\w.-]+(@\\d+)?$", var.github_repo))
+    error_message = "exactly one repo as owner/name or owner@id/name@id, no wildcards"
   }
 }
 

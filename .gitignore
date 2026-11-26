@@ -232,3 +232,4 @@ infra/envs/*/backend.hcl
 
 # AWS device certs/keys (CSRs in infra/envs/dev/device-csrs are public and committed)
 local/aws-certs/
+infra/envs/*/terraform.tfvars

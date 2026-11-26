@@ -49,3 +49,12 @@ mock_resource "aws_ecs_task_definition" {
 mock_resource "aws_iam_openid_connect_provider" {
   defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
 }
+mock_resource "aws_kms_key" {
+  defaults = {
+    arn    = "arn:aws:kms:ap-south-1:123456789012:key/mock-kms-key-id"
+    key_id = "mock-kms-key-id"
+  }
+}
+mock_resource "aws_ecs_service" {
+  defaults = { id = "arn:aws:ecs:ap-south-1:123456789012:service/mock/mock" }
+}

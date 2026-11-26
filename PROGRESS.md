@@ -1,7 +1,7 @@
 # PROGRESS.md: project state for new sessions
 
 > Read this first, then `CLAUDE.md` (the brief). Update this file at the end of every session.
-> Last updated: 2026-11-26.
+> Last updated: 2026-11-26 (M4 done).
 
 ## Status at a glance
 
@@ -11,25 +11,34 @@
 | M1 Simulator + PLC + gateway (local) | Done, committed `f4cd2aa` | 21 unit + 3 broker tests pass; guide in `simulator/README.md` |
 | M2 IoT Core, SQS, S3 (Terraform) | Done, committed `044bfc9` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
 | M3 Detection service + DynamoDB + SNS | Done (2026-11-26) | 58 tests pass; live: 0 false alerts on 90-msg baseline, all 6 attack types detected; results + limitations in `service/README.md` |
-| **M4 Containerise, ECR + ECS Fargate, CloudWatch** | **Next** | see below |
-| M5, M6, S1 | Not started | see CLAUDE.md §6 |
+| M4 Containerise, ECR + ECS Fargate, CloudWatch | Done (2026-11-26) | M4 specs green; live: 47/47 msgs stored by the Fargate task, 0 alerts; forced error → both alarms → SNS |
+| **M5 GitHub Actions** | **Next** | see below |
+| M6, S1 | Not started | see CLAUDE.md §6 |
 
-## Next: M4 (containerise + Fargate)
+## M4 results (2026-11-26)
 
-0. Make `tests/spec -m m4` and the tf spec green; don't edit the spec to fit the code.
-1. `service/Dockerfile` (non-root, slim). Production deps only (no `botocore[crt]`).
-2. Terraform `modules/compute`: ECR repo (scan on push), ECS cluster, Fargate task
-   0.25 vCPU/0.5 GB in a **public subnet, public IP, no inbound rules, no NAT** (CLAUDE.md),
-   `desired_count` variable defaulting to **0**. Log group 7 days.
-3. **Least-privilege task role**: sqs Receive/Delete on the queue, dynamodb Put/Scan on the 3
-   tables, sns:Publish on the topic, iot:ListThings, logs:FilterLogEvents on AWSIotLogsV2.
-   (Locally the worker runs with admin creds; M4 is where least privilege becomes real.)
-4. Container health check on `/health`; CloudWatch dashboard + 2–3 alarms (DLQ depth > 0,
-   task not running, alerts rate). "Done when": alarm fires on a forced error.
-5. Fargate bills per hour while running: scale back to 0 after every demo.
+Live test, worker on Fargate with the least-privilege task role, image `dev-0777c8f-dirty-2`
+(built from uncommitted M4 code; CI tags will be clean SHAs):
+- Task reached RUNNING + HEALTHY; first deploy 4 polls of 15 s, image-swap rollout ~3.5 min
+  (old task stops first, by design).
+- Happy path: simulator 60 s → 47 messages published → 47 readings in DynamoDB, 0 alerts.
+- Forced error (temporary inline Deny on dynamodb:PutItem, 3 messages from fake device
+  `fault-injection-01`, Deny removed after): first `processing failed` log 18:38:19 UTC;
+  `processing-errors` ALARM 18:39:25; `dlq-not-empty` ALARM 18:43:11; alarm history shows
+  "Successfully executed action" to SNS for both. DLQ purged, service back to 0.
+- ECR basic scan of the image: 9 HIGH, 5 MEDIUM, 2 UNDEFINED. All 9 HIGH are Debian `openssl`
+  3.5.9-1~deb13u1 in `python:3.12-slim`, with no fixed package available yet (checked 2026-11-26).
 
-Open M3 follow-ups (documented, not blocking): persist the replay seen-window across restarts;
-CloudWatch Logs subscription for faster auth-failure alerts.
+## Next: M5 (GitHub Actions)
+
+0. Make `tests/spec -m m5` + `tests/spec/tf/tests/m5_ci_oidc.tftest.hcl` green (module `infra/modules/ci_oidc`).
+1. **Decide with owner before writing ci.yml:** the frozen spec's Trivy step fails on HIGH, and the
+   base image has 9 unfixed HIGH openssl CVEs. Options: `ignore-unfixed: true` (allowed, spec only
+   fixes severity + exit-code), or a different base image (distroless/Chainguard). Don't edit the spec.
+2. Push with `provenance: false` (docker/build-push-action) or ECR can't scan it (see lessons).
+3. Ruff from the repo root reports 6 pre-existing issues in `tests/spec/*` and `tests/test_guardrails.py`
+   (RUF017, FURB167), which matter once CI runs ruff. Spec files are frozen: ask the owner, or scope ruff config.
+4. ECS deploy in CI = `terraform apply -var image_tag=${{ github.sha }}`; keep `desired_count` 0 by default.
 
 ## Tests (how to know nothing is broken)
 
@@ -38,8 +47,8 @@ CloudWatch Logs subscription for faster auth-failure alerts.
 | Simulator | `cd simulator && ../.venv/bin/pytest -q` | 21 pass |
 | Service | `cd service && ../.venv/bin/pytest -q` | 66 pass |
 | Repo guardrails + attacks | `.venv/bin/pytest -q tests --ignore=tests/spec` | 25 pass |
-| Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts | 12 pass |
-| **M4 spec** | `.venv/bin/pytest -q tests/spec -m m4` + `terraform -chdir=tests/spec/tf test` (compute runs) | red until M4 is built |
+| Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts, compute | 17 pass |
+| M4 spec | `.venv/bin/pytest -q tests/spec -m m4` (needs Docker) + tf spec | 12 + 7 pass. `terraform test` loads ALL spec files, so until ci_oidc exists run m4 from a scratch copy (symlink `infra`, copy main.tf + m4 file) |
 | **M5 spec** | `.venv/bin/pytest -q tests/spec -m m5` + tf spec (ci_oidc runs) | red until M5 |
 | **M6 spec** | `.venv/bin/pytest -q tests/spec -m m6` | red until M6 |
 
@@ -54,6 +63,16 @@ variables in the spec file), module `infra/modules/ci_oidc` (`plan`/`apply` role
 Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (reason)`.
 
 ## Lessons learned (don't repeat these)
+
+- **CloudWatch alarms can't publish to an SNS topic encrypted with `alias/aws/sns`** (its key
+  policy can't be edited), so the alarm goes to ALARM and no email is sent. Fixed: customer-managed key
+  `alias/iiot-alerts` (~$1/month, owner chose it 2026-11-26) whose policy allows cloudwatch.amazonaws.com,
+  plus account principals via SNS only (`kms:ViaService`), so the task role needs no KMS permissions.
+- **ECR basic scanning can't scan an OCI image index.** BuildKit's default provenance attestation
+  turns a push into an index, so scan_on_push silently did nothing. Always `--provenance=false`.
+- **Mocked `aws_iam_policy_document` returns random text, not JSON**: use `jsonencode` in modules
+  that `terraform test` with mock providers.
+- 12-digit runs in mock IDs (like a fake UUID group) trip the account-ID guardrail.
 
 - **SQS standard queues reorder and redeliver.** Never assume time order. Backlog replay on
   2026-11-15 produced 41 false R4.old_session + 19 false R3.flood alerts and ~12 emails.
@@ -100,7 +119,10 @@ Gitignored, never commit: `local/certs/`, `local/aws-certs/`, `*.key`, `infra/en
 - dev: 41 resources (unchanged in the M3 demo): 5 Things + certs + policy, IoT logging, topic rule, SQS + DLQ,
   S3 raw archive (30-day expiry), DynamoDB `iiot-readings`/`iiot-latest`/`iiot-alerts`,
   SNS `iiot-alerts` with confirmed email subscription.
-- Nothing bills hourly yet. Cost accrues only while the simulator runs.
+- M4 (+25 resources): customer KMS key for the alerts topic (~$1/month, the only fixed cost), VPC `10.20.0.0/16` with
+  2 public subnets + IGW (free), ECR `iiot-monitor` (2 tags, storage cents), ECS cluster `iiot` +
+  service `iiot-worker` at **desired_count 0**, log group `/ecs/iiot-worker` (7 d), 2 alarms, dashboard.
+- Nothing bills hourly while desired_count = 0. Run guide: `infra/README.md` → "Run the detection service on Fargate".
 
 ## Run the service (local, against real AWS)
 ```bash

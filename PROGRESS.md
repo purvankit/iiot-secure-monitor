@@ -10,25 +10,25 @@
 | M0 AWS safety | Done | `iiot` profile = dedicated iiot account (ID in backend.hcl, not in git); $5 budget lives in the org management account |
 | M1 Simulator + PLC + gateway (local) | Done, committed `f4cd2aa` | 21 unit + 3 broker tests pass; guide in `simulator/README.md` |
 | M2 IoT Core, SQS, S3 (Terraform) | Done, committed `044bfc9` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
-| **M3 Detection service + DynamoDB + SNS** | **In progress, NOT committed** | infra applied; 56/57 tests pass (1 waits on TODO below) |
-| M4–M6, S1 | Not started | see CLAUDE.md §6 |
+| M3 Detection service + DynamoDB + SNS | Done (2026-11-26) | 58 tests pass; live: 0 false alerts on 90-msg baseline, all 6 attack types detected; results + limitations in `service/README.md` |
+| **M4 Containerise, ECR + ECS Fargate, CloudWatch** | **Next** | see below |
+| M5, M6, S1 | Not started | see CLAUDE.md §6 |
 
-## Resume M3 here (in order)
+## Next: M4 (containerise + Fargate)
 
-1. **Pending `TODO(human)`** in `service/iiot_monitor/rules.py` → `_replay()`, branch
-   `elif t.session < st.session:`. The owner is writing this (learning exercise); don't fill it
-   in unasked. Spec = two tests in `service/tests/test_rules.py`:
-   `test_r4_replay_from_previous_session` (must alert, currently failing) and
-   `test_r4_late_delivery_from_previous_session_is_not_replay` (must not alert).
-   Idea: a real replay is a *new* publish, so broker `t.ingest_ts` is after the current session
-   start `st.session`; a late-delivered old message was ingested before it. Allow for device
-   clock skew via `self.cfg.future_ms` (owner decides the direction).
-2. Run `cd service && ../.venv/bin/pytest -q` → expect 57 passed. Then `ruff check .`.
-3. Clear the 62 junk alerts from the backlog run in DynamoDB `iiot-alerts` (ask first).
-4. Re-run the worker against SQS (see "Run the service" below), then attack demos:
-   spoofed value (R2), flood (R3), replay (R4), impersonation/foreign topic (R1). Confirm alerts
-   in DynamoDB + email. Record only measured numbers. `attacks/` scripts don't exist yet.
-5. Commit M3 (owner approves commits). Then write a short M3 section in a README.
+1. `service/Dockerfile` (non-root, slim). Production deps only (no `botocore[crt]`).
+2. Terraform `modules/compute`: ECR repo (scan on push), ECS cluster, Fargate task
+   0.25 vCPU/0.5 GB in a **public subnet, public IP, no inbound rules, no NAT** (CLAUDE.md),
+   `desired_count` variable defaulting to **0**. Log group 7 days.
+3. **Least-privilege task role**: sqs Receive/Delete on the queue, dynamodb Put/Scan on the 3
+   tables, sns:Publish on the topic, iot:ListThings, logs:FilterLogEvents on AWSIotLogsV2.
+   (Locally the worker runs with admin creds; M4 is where least privilege becomes real.)
+4. Container health check on `/health`; CloudWatch dashboard + 2–3 alarms (DLQ depth > 0,
+   task not running, alerts rate). "Done when": alarm fires on a forced error.
+5. Fargate bills per hour while running: scale back to 0 after every demo.
+
+Open M3 follow-ups (documented, not blocking): persist the replay seen-window across restarts;
+CloudWatch Logs subscription for faster auth-failure alerts.
 
 ## Lessons learned (don't repeat these)
 
@@ -37,6 +37,11 @@
   Fixed: flood window keeps sorted arrivals; R2 baseline only moves forward in time; email
   cooldown uses wall-clock time, not message time. Regression tests use a shuffled 2-session
   backlog (`backlog()` in test_rules.py).
+- **Untrusted messages must not update state.** A message failing R1 used to still update the
+  impersonated device's replay/flood state (fixed 2026-11-26, regression test
+  `test_r1_impersonation_cannot_poison_victim_state`).
+- **Measure latency on one clock.** Laptop clock (~2 s behind AWS) minus broker `ingest_ts`
+  gave negative latencies; use attack-script start vs alert `raised_at` (both laptop).
 - **Broker fields are trusted, payload fields are not.** The IoT rule adds `mqtt_client_id`,
   `topic_device_id`, `ingest_ts`. Detection timing uses `ingest_ts`.
 - **IoT Core unauthorised publish:** MQTT 5 → PUBACK `0x87 Not authorized` (connection stays);
@@ -69,12 +74,12 @@ Gitignored, never commit: `local/certs/`, `local/aws-certs/`, `*.key`, `infra/en
 ## AWS resources live now (ap-south-1, tag project=iiot-secure-monitor)
 
 - bootstrap: state bucket `iiot-secure-monitor-tfstate-<acct>` (7 resources)
-- dev: 41 resources: 5 Things + certs + policy, IoT logging, topic rule, SQS + DLQ,
+- dev: 41 resources (unchanged in the M3 demo): 5 Things + certs + policy, IoT logging, topic rule, SQS + DLQ,
   S3 raw archive (30-day expiry), DynamoDB `iiot-readings`/`iiot-latest`/`iiot-alerts`,
   SNS `iiot-alerts` with confirmed email subscription.
 - Nothing bills hourly yet. Cost accrues only while the simulator runs.
 
-## Run the service (M3, local, against real AWS)
+## Run the service (local, against real AWS)
 ```bash
 cd ~/projects/iiot-secure-monitor
 eval "$(AWS_PROFILE=iiot terraform -chdir=infra/envs/dev output -raw service_env)"
@@ -85,6 +90,7 @@ Simulator against AWS: `infra/README.md` → "Run the simulator against AWS".
 
 ## Working with the owner
 
+- Attack demo: `attacks/run_attack.py all` (stop the simulator first; it uses feeder-01's identity).
 - Wants explanations of the *why*, plain language for jargon, and occasional quiz questions.
 - Uses a phone sometimes: give short, paste-safe commands that start with an absolute `cd`
   (no `\` line continuations). New WSL tabs open in `/mnt/c/Users/Purvankit`, not `~`.

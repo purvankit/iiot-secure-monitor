@@ -39,6 +39,32 @@ module "ingest" {
   source = "../../modules/ingest"
 }
 
+module "data" {
+  source = "../../modules/data"
+}
+
+variable "alert_email" {
+  type      = string
+  sensitive = true
+}
+
+module "alerts" {
+  source      = "../../modules/alerts"
+  alert_email = var.alert_email
+}
+
+# Environment for the detection service (`eval "$(terraform output -raw service_env)"`).
+output "service_env" {
+  value = join("\n", [
+    "export AWS_REGION=ap-south-1",
+    "export QUEUE_URL=${module.ingest.queue_url}",
+    "export TABLE_READINGS=${module.data.readings_table}",
+    "export TABLE_LATEST=${module.data.latest_table}",
+    "export TABLE_ALERTS=${module.data.alerts_table}",
+    "export ALERT_TOPIC_ARN=${module.alerts.topic_arn}",
+  ])
+}
+
 output "iot_endpoint" {
   value = module.iot.endpoint
 }

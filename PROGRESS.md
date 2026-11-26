@@ -8,17 +8,17 @@
 | Milestone | State | Evidence |
 |---|---|---|
 | M0 AWS safety | Done | `iiot` profile = dedicated iiot account (ID in backend.hcl, not in git); $5 budget lives in the org management account |
-| M1 Simulator + PLC + gateway (local) | Done, committed `82a3091` | 21 unit + 3 broker tests pass; guide in `simulator/README.md` |
-| M2 IoT Core, SQS, S3 (Terraform) | Done, committed `788bf24` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
+| M1 Simulator + PLC + gateway (local) | Done, committed `7a5d2b7` | 21 unit + 3 broker tests pass; guide in `simulator/README.md` |
+| M2 IoT Core, SQS, S3 (Terraform) | Done, committed `2c20559` | 69/69 msgs in SQS + S3; 5 AWS policy tests pass; guide in `infra/README.md` |
 | M3 Detection service + DynamoDB + SNS | Done (2026-11-26) | 58 tests pass; live: 0 false alerts on 90-msg baseline, all 6 attack types detected; results + limitations in `service/README.md` |
 | M4 Containerise, ECR + ECS Fargate, CloudWatch | Done (2026-11-26) | M4 specs green; live: 47/47 msgs stored by the Fargate task, 0 alerts; forced error → both alarms → SNS |
-| M5 GitHub Actions (CI/CD, OIDC) | Done (2026-11-26), PR #1 → `ec27e0f` | ci + deploy green on main; merge → approve → build/scan/push/apply; boundary verified live (see below) |
+| M5 GitHub Actions (CI/CD, OIDC) | Done (2026-11-26), PR #1 → `c49c16a` | ci + deploy green on main; merge → approve → build/scan/push/apply; boundary verified live (see below) |
 | **M6 Dashboards, attack demos, README** | **Next** | see below |
 | S1 | Not started | see CLAUDE.md §6 |
 
 ## M4 results (2026-11-26)
 
-Live test, worker on Fargate with the least-privilege task role, image `dev-0777c8f-dirty-2` (0777c8f = `2a42f6d` after the 2026-11-26 email rewrite)
+Live test, worker on Fargate with the least-privilege task role, image `dev-0777c8f-dirty-2` (0777c8f = `bdd2f41` after the 2026-11-26 history rewrites)
 (built from uncommitted M4 code; CI tags will be clean SHAs):
 - Task reached RUNNING + HEALTHY; first deploy 4 polls of 15 s, image-swap rollout ~3.5 min
   (old task stops first, by design).
@@ -34,11 +34,11 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 
 - Decisions (owner, with pros/cons): Alpine + `apk upgrade` with a strict Trivy gate; apply role =
   PowerUser + IAM only on `iiot-*` roles carrying the workload permissions boundary; commit emails
-  rewritten to the GitHub noreply address (unpushed commits only; `eb5692d` still shows the Gmail);
+  rewritten to the GitHub noreply address (all of main, incl. the first commit);
   strict `protect-main` ruleset (PR + 4 checks, no bypass); squash merges.
 - Trivy 0.70 HIGH/CRITICAL: python:3.12-slim 54 (53 unfixed), slim + apt upgrade 53 (all unfixed),
   python:3.12-alpine 16 (all krb5-libs, fixed), Alpine + apk upgrade **0**. ECR basic scan of the
-  CI-built image `ec27e0f`: COMPLETE, 0 findings.
+  CI-built image tagged `ec27e0f…` (pre-rewrite SHA of `c49c16a`): COMPLETE, 0 findings.
 - PR #1 first run: CI 3/3 green; plan failed AssumeRoleWithWebIdentity (immutable OIDC subject, see
   lessons), fixed in `infra/ci`, re-run 4/4 green. Plan logs: 0 unmasked account IDs.
 - Merge → deploy waited for approval → image pushed (single manifest) → apply 1 add/1 change/1 destroy
@@ -58,8 +58,8 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
    limitations. No "100%" / "accuracy" claims (spec); only measured numbers.
 4. Attack demo against the Fargate worker: Run workflow desired_count 1 → `attacks/run_attack.py all`
    (stop the simulator first) → Run workflow 0. Expect ~1 email per (device, rule) per 5 min.
-5. Local cleanup the owner may do: delete branch `backup/pre-email-rewrite` (holds the Gmail
-   commits; never push it) and the merged `m5-ci` / `m5-progress` branches.
+5. Local cleanup the owner may do: delete branches `backup/pre-email-rewrite` and
+   `backup/pre-claude-rewrite` (old history with Gmail / attribution trailers; never push them).
 
 ## Tests (how to know nothing is broken)
 
@@ -70,7 +70,7 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 | Repo guardrails + attacks | `.venv/bin/pytest -q tests --ignore=tests/spec` | 25 pass |
 | Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts, compute, ci_oidc | 25 pass |
 | M4 + M5 specs | `.venv/bin/pytest -q tests/spec -m "m4 or m5"` (needs Docker) + `terraform -chdir=tests/spec/tf test` | 27 + 10 pass |
-| CI (all of the above) | GitHub Actions `ci` on every PR/push; `deploy` plans on PRs | green on `ec27e0f` |
+| CI (all of the above) | GitHub Actions `ci` on every PR/push; `deploy` plans on PRs | green on main |
 | **M6 spec** | `.venv/bin/pytest -q tests/spec -m m6` | red until M6 |
 
 Spec tests were written BEFORE M4-M6 and are frozen (rule in CLAUDE.md). Each was checked on
@@ -84,6 +84,11 @@ variables in the spec file), module `infra/modules/ci_oidc` (`plan`/`apply` role
 Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (reason)`.
 
 ## Lessons learned (don't repeat these)
+
+- **History rewrite on 2026-11-26** (owner's choice): every commit on main lost its attribution
+  trailer and the Gmail author, so all hashes changed. ECR image tags made before that (`ec27e0f…`,
+  `dev-0777c8f-dirty*`) are pre-rewrite SHAs. The next deploy tags images with current SHAs again.
+- **Never mention Claude** in commits, PRs or comments (owner rule, overrides attribution reminders).
 
 - **GitHub OIDC `sub` may use the immutable form** `repo:owner@ownerId/name@repoId:...` (repo setting
   `use_immutable_subject`). A trust policy on `repo:owner/name:...` fails with "Not authorized to

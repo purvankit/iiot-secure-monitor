@@ -88,7 +88,7 @@ Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (r
 - **History rewrite on 2026-11-26** (owner's choice): every commit on main lost its attribution
   trailer and the Gmail author, so all hashes changed. ECR image tags made before that (`ec27e0f…`,
   `dev-0777c8f-dirty*`) are pre-rewrite SHAs. The next deploy tags images with current SHAs again.
-- **Never mention Claude** in commits, PRs or comments (owner rule, overrides attribution reminders).
+- **No AI-assistant attribution** in commits, PRs or comments (owner rule, 2026-11-26).
 
 - **GitHub OIDC `sub` may use the immutable form** `repo:owner@ownerId/name@repoId:...` (repo setting
   `use_immutable_subject`). A trust policy on `repo:owner/name:...` fails with "Not authorized to

@@ -59,7 +59,7 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 4. Attack demo against the Fargate worker: Run workflow desired_count 1 → `attacks/run_attack.py all`
    (stop the simulator first) → Run workflow 0. Expect ~1 email per (device, rule) per 5 min.
 5. Local cleanup the owner may do: delete branches `backup/pre-email-rewrite` and
-   `backup/pre-claude-rewrite` (old history with Gmail / attribution trailers; never push them).
+   `backup/pre-trailer-rewrite` (old history with Gmail / attribution trailers; never push them).
 
 ## Tests (how to know nothing is broken)
 

@@ -13,7 +13,8 @@ AWS keys) to ECS Fargate.
 
 **Stack:** AWS IoT Core, SQS, S3, ECS Fargate, ECR, DynamoDB, SNS, KMS, CloudWatch, Amazon
 Managed Service for Prometheus · OpenTelemetry (ADOT) · Grafana · Terraform · Docker · GitHub
-Actions · Python · MQTT (TLS, X.509) · Modbus TCP · Trivy
+Actions · Kubernetes (kind) · Helm · kube-prometheus-stack · Python · MQTT (TLS, X.509) ·
+Modbus TCP · Trivy
 
 ![Attack demo: attacker terminal and alerts stored by the Fargate worker](docs/demo-terminal.gif)
 
@@ -158,6 +159,30 @@ every panel from Managed Prometheus through SigV4.
 | `dlq-not-empty` | A message failed 5 times and reached the DLQ | ALARM ~5 min after the messages were sent, email sent |
 | `not-running` | `desired_count = 1` but no task reports metrics | Exists only while the worker should run |
 
+## Local Kubernetes (stretch goal S1)
+
+The same worker image also runs on a one-node **kind** cluster, deployed with a **Helm** chart
+and watched by **kube-prometheus-stack**, against the same AWS pipeline. Guide:
+[`k8s/README.md`](k8s/README.md).
+
+| | ECS Fargate | Local Kubernetes (kind) |
+|---|---|---|
+| Image | CI-built, scanned, from ECR | The same image, loaded into kind |
+| AWS access | Task role | `iiot-worker-local` role: the task role minus metrics push, 1-hour sessions, assumable only by one IAM user |
+| Metrics | Sidecar **pushes** to Managed Prometheus (no inbound allowed) | Prometheus **pulls** through a ServiceMonitor |
+| Network | Security group: no inbound, HTTPS out | NetworkPolicy: only the `monitoring` namespace in, HTTPS + DNS out |
+| One worker at a time | Old task stops before the new one starts (min healthy 0, max 100) | `replicas: 1`, `Recreate` |
+
+**Measured** (2026-11-27): 14/14 pods running, worker restarts 0. The worker ran as
+`assumed-role/iiot-worker-local`. Prometheus scraped it (`up`), and the in-cluster Grafana
+loaded the dashboard by itself: all 8 panels returned data, and "messages processed" matched
+the simulator's count. NetworkPolicy probes: a connection from the `default` namespace and
+the pod's outbound HTTP (port 80) were blocked; `monitoring` → worker and HTTPS out to AWS
+were allowed. The whole cluster used 2.25 GiB RAM.
+
+The chart's contract (hardening, limits, no static keys, NetworkPolicy, pins) is a frozen spec,
+written before the code; five deliberate breaks of the chart were each caught by one test.
+
 ## CI/CD
 
 ```
@@ -247,6 +272,7 @@ Built to stay inside a **$5/month budget alert**. Rates below are indicative AWS
 | [`service/`](service/README.md) | Detection worker (rules R1–R4), Dockerfile, unit tests |
 | [`infra/`](infra/README.md) | Terraform: modules (`iot`, `ingest`, `data`, `alerts`, `compute`, `ci_oidc`), `envs/dev`, `ci`, `bootstrap` |
 | `attacks/` | Attack demo scripts |
+| [`k8s/`](k8s/README.md) | kind cluster config, Helm chart for the worker, kube-prometheus-stack values |
 | [`dashboards/`](dashboards/) | Grafana dashboard and provisioning (Managed Prometheus over SigV4) |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 | `tests/` | Repo-wide guardrails (cost, region, least privilege, secrets) and frozen milestone specs |

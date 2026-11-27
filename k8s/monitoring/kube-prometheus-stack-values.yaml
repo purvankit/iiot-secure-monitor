@@ -1,0 +1,51 @@
+# kube-prometheus-stack for S1 (chart version pinned in scripts/k8s-up.sh).
+# Trimmed for a one-node kind cluster on a laptop: only what's needed to scrape and chart
+# the detection worker.
+
+alertmanager:
+  enabled: false          # alerting stays in AWS (CloudWatch alarms -> SNS)
+
+# Not reachable or not useful in kind, and the default dashboards for them would be empty.
+nodeExporter:
+  enabled: false          # needs host mount propagation that Docker Desktop/WSL doesn't give
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Pick up ServiceMonitors from every namespace without a matching `release` label,
+    # so the worker's chart doesn't need to know this stack's release name.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    retention: 1d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 1Gi
+
+grafana:
+  defaultDashboardsEnabled: false   # keep the UI focused on the worker dashboard
+  admin:
+    existingSecret: grafana-admin   # random password created by scripts/k8s-up.sh
+    userKey: admin-user
+    passwordKey: admin-password
+  sidecar:
+    dashboards:
+      searchNamespace: ALL          # the worker's dashboard ConfigMap lives in namespace iiot
+  env:
+    # Same lesson as M6: Grafana otherwise downloads unpinned plugins on every start.
+    GF_PLUGINS_PREINSTALL_DISABLED: "true"
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer              # read-only without logging in; port-forwarded to localhost only
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false

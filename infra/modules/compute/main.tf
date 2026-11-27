@@ -3,7 +3,7 @@
 #   ECR (scanned, immutable tags) --image--> ECS service (0 or 1 task, public subnet)
 #   task role: only the API calls worker.py makes;  logs -> CloudWatch -> metric filter -> alarm -> SNS
 #
-# Cost decisions (CLAUDE.md §7): no NAT gateway (public subnet + public IP, no inbound),
+# Cost decisions (project brief, cost guardrails): no NAT gateway (public subnet + public IP, no inbound),
 # no load balancer (nothing calls the worker), Container Insights off, desired_count 0 by default.
 
 terraform {
@@ -191,49 +191,82 @@ resource "aws_iam_role" "task" {
   assume_role_policy   = local.ecs_tasks_trust
 }
 
+locals {
+  # Exactly the calls the task makes (one list for both roles below, so they can't drift).
+  task_statements = [
+    {
+      Sid      = "ConsumeTelemetry"
+      Effect   = "Allow"
+      Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage"]
+      Resource = var.queue_arn
+    },
+    {
+      Sid      = "WriteState"
+      Effect   = "Allow"
+      Action   = ["dynamodb:PutItem", "dynamodb:Scan"]
+      Resource = var.table_arns
+    },
+    {
+      Sid      = "SendAlerts"
+      Effect   = "Allow"
+      Action   = ["sns:Publish"]
+      Resource = var.alert_topic_arn
+    },
+    {
+      Sid    = "ReadDeviceRegistry"
+      Effect = "Allow"
+      Action = ["iot:ListThings"]
+      # guardrail: allow-wildcard (iot:ListThings has no resource type; IAM only accepts "*")
+      Resource = "*"
+    },
+    {
+      Sid      = "ReadIotAuthFailures"
+      Effect   = "Allow"
+      Action   = ["logs:FilterLogEvents"]
+      Resource = [var.iot_log_group_arn, "${var.iot_log_group_arn}:*"]
+    },
+    {
+      Sid      = "PushMetrics"
+      Effect   = "Allow"
+      Action   = ["aps:RemoteWrite"]
+      Resource = var.prometheus_workspace_arn
+    },
+  ]
+}
+
 resource "aws_iam_role_policy" "task" {
   role = aws_iam_role.task.id
   policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.task_statements
+  })
+}
+
+# ---------------------------------------------------------------- local worker (S1, optional)
+# Role for the same worker image running on a laptop Kubernetes cluster (kind). Exists only
+# when a principal is named; only that principal can assume it, for at most 1 hour. Its
+# permissions are the task role's minus PushMetrics (in-cluster Prometheus pulls instead).
+resource "aws_iam_role" "local_worker" {
+  count                = var.local_worker_principal_arn == null ? 0 : 1
+  name                 = "${local.name}-local"
+  max_session_duration = 3600
+  permissions_boundary = var.permissions_boundary_arn
+  assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "ConsumeTelemetry"
-        Effect   = "Allow"
-        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage"]
-        Resource = var.queue_arn
-      },
-      {
-        Sid      = "WriteState"
-        Effect   = "Allow"
-        Action   = ["dynamodb:PutItem", "dynamodb:Scan"]
-        Resource = var.table_arns
-      },
-      {
-        Sid      = "SendAlerts"
-        Effect   = "Allow"
-        Action   = ["sns:Publish"]
-        Resource = var.alert_topic_arn
-      },
-      {
-        Sid    = "ReadDeviceRegistry"
-        Effect = "Allow"
-        Action = ["iot:ListThings"]
-        # guardrail: allow-wildcard (iot:ListThings has no resource type; IAM only accepts "*")
-        Resource = "*"
-      },
-      {
-        Sid      = "ReadIotAuthFailures"
-        Effect   = "Allow"
-        Action   = ["logs:FilterLogEvents"]
-        Resource = [var.iot_log_group_arn, "${var.iot_log_group_arn}:*"]
-      },
-      {
-        Sid      = "PushMetrics"
-        Effect   = "Allow"
-        Action   = ["aps:RemoteWrite"]
-        Resource = var.prometheus_workspace_arn
-      },
-    ]
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = var.local_worker_principal_arn }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "local_worker" {
+  count = var.local_worker_principal_arn == null ? 0 : 1
+  role  = aws_iam_role.local_worker[0].id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [for s in local.task_statements : s if s.Sid != "PushMetrics"]
   })
 }
 

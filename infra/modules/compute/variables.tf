@@ -70,3 +70,13 @@ variable "collector_memory_mb" {
   type        = number
   default     = 128
 }
+
+variable "local_worker_principal_arn" {
+  description = "IAM user/role allowed to assume the local-worker role (S1, kind). null = no role"
+  type        = string
+  default     = null
+  validation {
+    condition     = var.local_worker_principal_arn == null || can(regex("^arn:aws:iam::[0-9]{12}:(user|role)/[A-Za-z0-9+=,.@_/-]+$", var.local_worker_principal_arn))
+    error_message = "exactly one IAM user or role ARN, no wildcards"
+  }
+}

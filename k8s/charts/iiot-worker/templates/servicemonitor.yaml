@@ -1,0 +1,16 @@
+# Tells kube-prometheus-stack's Prometheus to scrape the worker (the "pull" model, possible
+# here because Prometheus and the pod share the cluster network; on Fargate a sidecar pushes).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: iiot-worker
+  labels:
+    {{- include "iiot-worker.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "iiot-worker.selector" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}

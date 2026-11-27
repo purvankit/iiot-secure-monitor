@@ -1,0 +1,13 @@
+# S1 SPEC fixture (2026-11-27): install-time values the spec renders the chart with.
+# Mock account 123456789012; the real values come from `terraform output` at install time,
+# so no account ID is ever stored in the repo.
+image:
+  repository: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/iiot-monitor
+  tag: 647d19700c6b0e4b1b5c7cbd2d4a6c0d8f6e1a2b
+aws:
+  queueUrl: https://sqs.ap-south-1.amazonaws.com/123456789012/iiot-telemetry
+  tables:
+    readings: iiot-readings
+    latest: iiot-latest
+    alerts: iiot-alerts
+  alertTopicArn: arn:aws:sns:ap-south-1:123456789012:iiot-alerts

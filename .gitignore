@@ -241,3 +241,7 @@ tests/spec/tf/.terraform.lock.hcl
 # Grafana plugin binaries (fetched + checksum-verified by scripts/fetch-grafana-plugin.sh)
 local/grafana-plugins/
 local/.grafana-plugin-*
+
+# Demo recording workspace (recordings, tools, temp configs)
+local/demo/
+local/grafana-aws/

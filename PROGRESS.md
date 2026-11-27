@@ -1,7 +1,7 @@
 # PROGRESS.md: project state for new sessions
 
-> Read this first, then `CLAUDE.md` (the brief). Update this file at the end of every session.
-> Last updated: 2026-11-26 (M5 done).
+> Read this first, then the project brief (instructions file at the repo root). Update this file at the end of every session.
+> Last updated: 2026-11-27 (M6 done; v1 core complete).
 
 ## Status at a glance
 
@@ -13,8 +13,8 @@
 | M3 Detection service + DynamoDB + SNS | Done (2026-11-26) | 58 tests pass; live: 0 false alerts on 90-msg baseline, all 6 attack types detected; results + limitations in `service/README.md` |
 | M4 Containerise, ECR + ECS Fargate, CloudWatch | Done (2026-11-26) | M4 specs green; live: 47/47 msgs stored by the Fargate task, 0 alerts; forced error → both alarms → SNS |
 | M5 GitHub Actions (CI/CD, OIDC) | Done (2026-11-26), PR #1 → `c49c16a` | ci + deploy green on main; merge → approve → build/scan/push/apply; boundary verified live (see below) |
-| **M6 Dashboards, attack demos, README** | **Next** | see below |
-| S1 | Not started | see CLAUDE.md §6 |
+| M6 Dashboards, attack demos, README | Done (2026-11-27), PRs #4, #5, + demo PR | M6 spec 6/6; Fargate demo: 6/6 attacks detected, 0.04-0.09 s on the MQTT path; both GIFs from one run (see below) |
+| **S1 Local Kubernetes (stretch)** or **SOC home lab** | **Next: owner decides** | see below |
 
 ## M4 results (2026-11-26)
 
@@ -48,18 +48,34 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
   HEALTHY on the CI image, registry loaded, 24 published → 24 readings, queue drained; 1 malformed
   message → `R0.malformed` alert → "emailed" (task role → KMS-encrypted SNS works). Scaled back to 0.
 
-## Next: M6 (dashboards, attack demos, README)
+## M6 results (2026-11-27)
 
-0. Make `tests/spec -m m6` green; then add `m6` to the spec step in `.github/workflows/ci.yml`.
-1. Everything goes through PRs now (main is protected): branch → PR → checks → squash merge.
-2. Grafana dashboards (`dashboards/*.json`) may only query metrics `worker.py` exports
-   (`iiot_messages_total`, `iiot_alerts_total`, `iiot_processing_seconds_*`).
-3. README sections: architecture, threat model, IEC 62443 table (FR/SR numbers), cost, demo GIF,
-   limitations. No "100%" / "accuracy" claims (spec); only measured numbers.
-4. Attack demo against the Fargate worker: Run workflow desired_count 1 → `attacks/run_attack.py all`
-   (stop the simulator first) → Run workflow 0. Expect ~1 email per (device, rule) per 5 min.
-5. Local cleanup the owner may do: delete branches `backup/pre-email-rewrite` and
-   `backup/pre-trailer-rewrite` (old history with Gmail / attribution trailers; never push them).
+- Decision (ADR `docs/adr/0001-grafana-metrics-source.md`, owner chose option C): the Fargate task
+  can't be scraped (no inbound), so an ADOT sidecar scrapes `localhost:8080` and remote-writes to
+  Amazon Managed Prometheus (AMP) with SigV4. Owner-approved frozen-spec change (separate commit
+  `spec(M4): ...`): task role 7 -> 8 actions, `aps:RemoteWrite` pinned to the workspace ARN.
+- Fargate attack demo (2026-11-27 14:19 UTC, one run, recorded on both sides): spoof R2 0.05/0.08 s,
+  flood R3 0.05 s, replay R4 0.04/0.09 s, duplicate 0.04 s, impersonation R1 0.05 s, foreign-topic
+  R1 auth failure 62 s (log + 60 s poll). Detection time = raised_at - IoT Core ingest_ts (AWS clocks).
+- False alarms: 3 baseline devices, 4,382 messages over ~3.5 h, 0 alerts on them.
+- Task with sidecar on Fargate: memory 15.1% avg / 15.2% peak of 512 MB (worker alone 10.4%),
+  CPU 9.0% avg / 27.2% peak. No memory spec change needed.
+- GIFs: `docs/demo-terminal.gif` (asciinema + `scripts/cast_to_gif.py`, pauses capped at 1.5 s) and
+  `docs/demo-grafana.gif` (owner recorded with ScreenToGif, sped up ~9x). Same run.
+- Grafana: laptop only (`docker compose --profile monitoring`), plugin pinned + checksum-verified,
+  no startup downloads, credentials via `credential_process` + `scripts/grafana-aws-creds.sh`.
+
+## Next (owner decides)
+
+1. **S1 stretch (10-15 h):** same containers on local Kubernetes (k3d/kind) + kube-prometheus-stack.
+   Fills the Kubernetes gap (58% of cloud/DevOps postings in the 2026-11-14 analysis).
+2. **SOC home lab (next project per the plan):** Wazuh SIEM ingesting this platform's alerts and AWS
+   logs. Raises security-role coverage the most (35% -> 60% in the analysis).
+3. Resume: add this project's bullets (only built + measured items); see the personal brief.
+4. Follow-ups (documented, not blocking): read-only IAM role for Grafana (aps:Query* only);
+   CloudWatch Logs subscription for near-real-time auth-failure alerts; persist the replay window.
+5. Local cleanup the owner may do: delete `backup/pre-email-rewrite` and `backup/pre-trailer-rewrite`
+   (old history with Gmail / attribution trailers; never push them).
 
 ## Tests (how to know nothing is broken)
 
@@ -69,11 +85,10 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 | Service | `cd service && ../.venv/bin/pytest -q` | 66 pass |
 | Repo guardrails + attacks | `.venv/bin/pytest -q tests --ignore=tests/spec` | 25 pass |
 | Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts, compute, ci_oidc | 25 pass |
-| M4 + M5 specs | `.venv/bin/pytest -q tests/spec -m "m4 or m5"` (needs Docker) + `terraform -chdir=tests/spec/tf test` | 27 + 10 pass |
+| M4 + M5 + M6 specs | `.venv/bin/pytest -q tests/spec` (needs Docker) + `terraform -chdir=tests/spec/tf test` | 33 + 10 pass; CI runs all three |
 | CI (all of the above) | GitHub Actions `ci` on every PR/push; `deploy` plans on PRs | green on main |
-| **M6 spec** | `.venv/bin/pytest -q tests/spec -m m6` | red until M6 |
 
-Spec tests were written BEFORE M4-M6 and are frozen (rule in CLAUDE.md). Each was checked on
+Spec tests were written BEFORE M4-M6 and are frozen (rule in the project brief). Each was checked on
 2026-11-26 to be satisfiable (a throwaway prototype in the scratchpad passed it, then was deleted)
 and non-vacuous (deliberately broken prototypes failed it). They fix interfaces M4/M5 must follow:
 module `infra/modules/compute` (resources `aws_ecs_service.worker`, `aws_ecs_task_definition.worker`,
@@ -84,6 +99,20 @@ variables in the spec file), module `infra/modules/ci_oidc` (`plan`/`apply` role
 Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (reason)`.
 
 ## Lessons learned (don't repeat these)
+
+- **`aws login` credentials rotate every ~15 min.** Never hand a long-running tool (Grafana) a
+  one-off copy: use `credential_process` so the SDK re-fetches. Cost two failed demo takes.
+- **A Prometheus counter appears at 1, and `increase()` can't count that first step:** pre-create
+  every known label set at 0 (`init_metrics`), or single alerts are invisible on dashboards.
+- **Grafana silently ignores a refresh interval that isn't in its allowed list** (15s isn't): the
+  dashboard froze with no error. Backend API checks can't catch this; check in a real browser.
+- **Recordings can leak the account ID:** boto3's account-based endpoints put it in hostnames, and
+  S3 bucket names contain it. Demo output goes through a 12-digit mask; scripts print error
+  types, not hostnames. Grep every recording for the ID before publishing.
+- **This laptop's WSL network drops briefly** (DNS failures, `Errno 101` on new connections):
+  demo clients retry connects; the watcher survives failed polls.
+- `pgrep -f <pattern>` matches its own shell when the pattern is in the command line; use a
+  bracket trick (`demo[.]sh`) or `ps | grep`.
 
 - **History rewrite on 2026-11-26** (owner's choice): every commit on main lost its attribution
   trailer and the Gmail author, so all hashes changed. ECR image tags made before that (`ec27e0f…`,
@@ -142,9 +171,11 @@ Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (r
 simulator/   devices, Modbus PLC sim, edge gateway (iiot_sim/), tests, README (M1)
 service/     detection service (iiot_monitor/): schema, rules R1-R4, alerts, store, authlog, worker
 infra/       bootstrap/ (state bucket, LOCAL state, backed up to S3 bootstrap/ key)
-             modules/ iot, ingest, data, alerts;  envs/dev/ (S3 backend), README (M2)
-scripts/     gen-local-certs.sh, gen-aws-device-keys.sh, fetch-aws-device-certs.sh
-local/       mosquitto config; certs/ and aws-certs/ are gitignored (private keys)
+             modules/ iot, ingest, data, alerts, compute, ci_oidc, monitoring; envs/dev/; ci/ (owner-applied)
+scripts/     cert/key helpers, fetch-grafana-plugin.sh, grafana-aws-creds.sh, cast_to_gif.py
+dashboards/  Grafana dashboard + provisioning;  docs/adr/ decision records;  docs/*.gif demo
+attacks/     run_attack.py (attacker), watch_alerts.py (cloud-side alert printer)
+local/       mosquitto config; gitignored: certs/, aws-certs/ (keys), grafana-plugins/, grafana-aws/ (temp creds), demo/
 ```
 
 Gitignored, never commit: `local/certs/`, `local/aws-certs/`, `*.key`, `infra/envs/*/backend.hcl`,
@@ -163,6 +194,7 @@ Gitignored, never commit: `local/certs/`, `local/aws-certs/`, `*.key`, `infra/en
   `github-iiot-plan` / `github-iiot-apply`, policy `iiot-workload-boundary` (attached to the 4 project roles).
 - GitHub: environment `dev` (required reviewer = owner, branch `main`), secrets `AWS_PLAN_ROLE_ARN`,
   `TF_STATE_BUCKET`, `ALERT_EMAIL` + env secret `AWS_APPLY_ROLE_ARN`, ruleset `protect-main`.
+- M6: AMP workspace `iiot-metrics` (no fixed fee; per sample, cents), ADOT sidecar in the task definition.
 - Nothing bills hourly while desired_count = 0. Run guide: `infra/README.md` → "Run the detection service on Fargate".
 
 ## Run the service (local, against real AWS)

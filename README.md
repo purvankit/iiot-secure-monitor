@@ -11,8 +11,11 @@ detection is modelled on IEC 61850 GOOSE `stNum`/`sqNum` sequencing.
 All infrastructure is Terraform, and changes ship through GitHub Actions with OIDC (no stored
 AWS keys) to ECS Fargate.
 
-**Stack:** AWS IoT Core, SQS, S3, ECS Fargate, ECR, DynamoDB, SNS, KMS, CloudWatch ·
-Terraform · Docker · GitHub Actions · Python · MQTT (TLS, X.509) · Modbus TCP · Trivy
+**Stack:** AWS IoT Core, SQS, S3, ECS Fargate, ECR, DynamoDB, SNS, KMS, CloudWatch, Amazon
+Managed Service for Prometheus · OpenTelemetry (ADOT) · Grafana · Terraform · Docker · GitHub
+Actions · Python · MQTT (TLS, X.509) · Modbus TCP · Trivy
+
+![Attack demo: attacker terminal and alerts stored by the Fargate worker](docs/demo-terminal.gif)
 
 ## Why
 
@@ -43,8 +46,11 @@ flowchart LR
     W -- "logs" --> CW["CloudWatch<br/>metric filter, alarms, dashboard"]
     CW --> SNS
     ECR["ECR<br/>scan on push, immutable tags"] --> W
+    W -- "/metrics over localhost" --> ADOT["ADOT sidecar<br/>same task"]
+    ADOT -- "remote write, SigV4" --> AMP["Managed Prometheus"]
   end
   SNS --> MAIL["Email"]
+  GRAF["Grafana (laptop)"] -- "SigV4 queries" --> AMP
   GH["GitHub Actions<br/>OIDC roles"] -- "push image, terraform apply" --> ECR
 ```
 
@@ -60,6 +66,7 @@ Key design decisions:
 | Fargate, scaled to 0 when idle | No servers to patch; costs nothing while off |
 | Public subnet, public IP, no inbound rules, no NAT gateway | The worker only calls out (port 443); a NAT gateway would bill every hour. Production alternative: private subnets + VPC endpoints |
 | Exactly one worker at a time | Flood windows and sequence numbers live in one process; two workers would each see half the traffic |
+| Metrics pushed by a sidecar to Managed Prometheus | Nothing can pull from a task with no inbound rules; the sidecar scrapes over localhost and pushes out. Decision record: [ADR 0001](docs/adr/0001-grafana-metrics-source.md) |
 
 ## Threat model
 
@@ -93,7 +100,9 @@ SNS (at most one email per device and rule every 5 minutes). Details:
 
 ## Demo: attacks and detection
 
-The attack scripts connect with feeder-01's stolen identity and run each attack in turn:
+The attacker uses feeder-01's stolen certificate and runs each attack in turn, while three
+other devices keep sending normal traffic. `attacks/watch_alerts.py` prints each alert as the
+Fargate worker stores it:
 
 ```bash
 cd ~/projects/iiot-secure-monitor
@@ -101,21 +110,33 @@ export MQTT_HOST=$(terraform -chdir=infra/envs/dev output -raw iot_endpoint)
 AWS_PROFILE=iiot .venv/bin/python attacks/run_attack.py all
 ```
 
-**Measured results** (one run, 2026-11-26, detection worker running on a laptop against the
-AWS pipeline). Baseline first: 5 devices, 90 s of normal traffic, 90 messages, **0 alerts**.
+**Measured results** (one run, 2026-11-27, worker on ECS Fargate). Detection time is the
+alert's storage time minus IoT Core's receive time of the triggering message; both are AWS
+clocks, so the laptop's clock skew doesn't affect it.
 
-| Attack | Alerts raised |
-|---|---|
-| Spoofed value (55 Hz, then +0.9 Hz in 1.1 s) | R2 out of range, R2 rate of change |
-| Flood (50 messages in ~6 s) | R3 message flood ×1 |
-| Replay of a captured genuine message (242 s old) | R4 old session, R4 stale |
-| Byte-identical duplicate | R4 duplicate seq |
-| Impersonation (feeder-01 key, payload claims motor-01) | R1 identity mismatch (critical) |
-| Publish to motor-01's topic | R1 auth failure (from CloudWatch Logs) |
+| Attack | Alerts raised | Detected in |
+|---|---|---|
+| Spoofed value (55 Hz, then +0.9 Hz in 1.1 s) | R2 out of range, R2 rate of change | 0.05 s, 0.08 s |
+| Flood (50 messages in ~6 s) | R3 message flood ×1 | 0.05 s |
+| Replay of a captured genuine message | R4 old session, R4 stale | 0.04 s, 0.09 s |
+| Byte-identical duplicate | R4 duplicate seq | 0.04 s |
+| Impersonation (feeder-01 key, payload claims motor-01) | R1 identity mismatch (critical) | 0.05 s |
+| Publish to motor-01's topic | R1 auth failure (from CloudWatch Logs) | 62 s |
 
-All 6 attacks were detected and all 10 alerts were expected ones. Time from attack start to
-stored alert, measured on one clock: impersonation **0.17 s**, replay **0.70 s**, foreign-topic
-publish **85.7 s** (CloudWatch log delivery plus the 60 s polling interval).
+All 6 attacks were detected and all 8 alerts were expected ones. The foreign-topic publish is
+slow by design: IoT Core rejects it, so the only evidence is its log, which the worker polls
+every 60 s. False alarms: the three baseline devices sent 4,382 messages over ~3.5 hours that
+day with **0 alerts** raised on them.
+
+The same run on the Grafana dashboard (recorded live, sped up ~9×; one frame per 10 s refresh):
+
+![Grafana dashboard during the attack run](docs/demo-grafana.gif)
+
+The flood shows as the message-rate spike, the alerts as bars per rule, the replayed and
+impersonating messages as "rejected". Two notes on the counts: the window is the last
+5 minutes, so the first alerts scroll out by the end; and the recording predates a dashboard
+fix, so it shows Prometheus' extrapolated `increase()` values (a 0 → 1 step reads ~1.3). The
+dashboard now rounds them to whole numbers.
 
 ## Running in AWS
 
@@ -123,6 +144,11 @@ publish **85.7 s** (CloudWatch log delivery plus the 60 s polling interval).
 simulated messages in 60 s were all stored in DynamoDB with 0 alerts. After the CI/CD pipeline
 took over, a demo run on the CI-built image stored 24 of 24 messages, and one malformed message
 produced one alert email through the KMS-encrypted SNS topic.
+
+**Metrics path** (2026-11-27): the ADOT sidecar shares the task with the worker. Measured on
+Fargate over ~3.5 hours: task memory 15.1% average, 15.2% peak of 512 MB (worker alone the day
+before: 10.4% peak), CPU 9.0% average, 27.2% peak of 0.25 vCPU. Grafana on the laptop read
+every panel from Managed Prometheus through SigV4.
 
 **Alarms**, tested by forcing a real failure (a temporary deny on `dynamodb:PutItem`):
 
@@ -188,6 +214,7 @@ Built to stay inside a **$5/month budget alert**. Rates below are indicative AWS
 | Public IPv4 on the task | $0.005 per hour | Only while the task runs |
 | KMS customer key (alerts topic) | ~$1 per month | The only fixed monthly cost |
 | IoT Core | ~$1 per million messages | Simulator publishes every 5 s and only runs while working |
+| Managed Prometheus | Per sample ingested, stored and queried | A few dozen series every 15 s, only while the worker runs: cents |
 | DynamoDB, SQS, SNS | Per request | On-demand billing; tiny volumes |
 | S3, CloudWatch Logs, ECR | Per GB | 30-day object expiry, 7-day log retention, last 10 images |
 | NAT gateway, load balancer, EKS | Not used | Each would bill every hour even when idle |
@@ -204,6 +231,11 @@ Built to stay inside a **$5/month budget alert**. Rates below are indicative AWS
   for example DynamoDB with conditional writes.
 - **Replay window after a restart.** Only each device's last sequence number is restored, so
   a replay of a very recent message right after a worker restart isn't flagged.
+- **Grafana runs on a laptop.** Amazon Managed Grafana bills per user, so dashboards are viewed
+  locally with temporary `aws login` credentials. The Fargate deployment is watched by
+  CloudWatch alarms whether or not Grafana is open.
+- **Demo tooling depends on the laptop's network.** During recording, the laptop dropped DNS
+  and its network route a few times; the cloud pipeline kept processing throughout.
 - **Demo scale.** Results come from single runs with 5 simulated devices, not a long-running
   site. One region, no high availability, one dev environment.
 
@@ -215,6 +247,8 @@ Built to stay inside a **$5/month budget alert**. Rates below are indicative AWS
 | [`service/`](service/README.md) | Detection worker (rules R1–R4), Dockerfile, unit tests |
 | [`infra/`](infra/README.md) | Terraform: modules (`iot`, `ingest`, `data`, `alerts`, `compute`, `ci_oidc`), `envs/dev`, `ci`, `bootstrap` |
 | `attacks/` | Attack demo scripts |
+| [`dashboards/`](dashboards/) | Grafana dashboard and provisioning (Managed Prometheus over SigV4) |
+| [`docs/adr/`](docs/adr/) | Architecture decision records |
 | `tests/` | Repo-wide guardrails (cost, region, least privilege, secrets) and frozen milestone specs |
 | `.github/workflows/` | `ci.yml`, `deploy.yml` |
 

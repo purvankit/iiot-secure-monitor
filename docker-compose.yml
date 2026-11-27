@@ -44,3 +44,38 @@ services:
       PLC_HOST: plc
       PLC_PORT: "5020"
     command: ["python", "-m", "iiot_sim.gateway"]
+
+  # ---- Monitoring (M6, ADR 0001): Grafana on the laptop, reading Amazon Managed Prometheus.
+  # Only starts with `--profile monitoring`, so the M1 stack above is unchanged.
+  # Needs AMP_QUERY_URL and temporary AWS credentials in the environment (infra/README.md).
+  grafana:
+    # Pinned by digest. Trivy 0.70 (2026-11-27): 20 HIGH, all in Go libraries inside the Grafana
+    # binary, fixed upstream but not yet released by Grafana. Mitigation: localhost only,
+    # anonymous users read-only, never deployed to AWS. Re-check on each Grafana release.
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
+    profiles: [monitoring]
+    ports:
+      - "127.0.0.1:3000:3000"   # bind to localhost only
+    environment:
+      AMP_QUERY_URL: ${AMP_QUERY_URL:-}
+      AWS_REGION: ap-south-1
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      GF_AUTH_SIGV4_AUTH_ENABLED: "true"            # sign Prometheus queries for AMP
+      GF_AWS_ALLOWED_AUTH_PROVIDERS: default        # credentials from the env vars above
+      # Grafana 13 serves SigV4 Prometheus through a separate plugin process, which only sees
+      # host env vars (the AWS credentials) when explicitly forwarded, and only to this plugin.
+      GF_PLUGINS_FORWARD_HOST_ENV_VARS: grafana-amazonprometheus-datasource
+      # No plugin downloads at startup (default: ~20 unpinned plugins from grafana.com each
+      # start). The one plugin needed is pinned + checksum-verified by scripts/fetch-grafana-plugin.sh.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"             # open the dashboard without logging in...
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer            # ...but read-only
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/iiot-worker.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - ./dashboards/provisioning:/etc/grafana/provisioning:ro
+      - ./local/grafana-plugins:/var/lib/grafana/plugins:ro

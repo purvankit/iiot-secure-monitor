@@ -21,6 +21,28 @@ locals {
   region     = data.aws_region.current.region
   queue_name = basename(var.queue_url) # SQS CloudWatch metrics are keyed by queue name
   port       = 8080                    # worker.serve_http: /health + Prometheus /metrics
+
+  # Metrics push (ADR 0001): the ADOT sidecar scrapes the worker over localhost (containers in
+  # an awsvpc task share one network namespace, so no inbound rule is needed) and remote-writes
+  # to AMP with SigV4, signed by the task role.
+  workspace_id     = element(split("/", var.prometheus_workspace_arn), 1)
+  remote_write_url = "https://aps-workspaces.${local.region}.amazonaws.com/workspaces/${local.workspace_id}/api/v1/remote_write"
+  collector_config = yamlencode({
+    extensions = { sigv4auth = { region = local.region, service = "aps" } }
+    receivers = { prometheus = { config = { scrape_configs = [{
+      job_name        = "iiot-worker"
+      scrape_interval = "15s"
+      static_configs  = [{ targets = ["localhost:${local.port}"] }]
+    }] } } }
+    exporters = { prometheus_remote_write = {
+      endpoint = local.remote_write_url
+      auth     = { authenticator = "sigv4auth" }
+    } }
+    service = {
+      extensions = ["sigv4auth"]
+      pipelines  = { metrics = { receivers = ["prometheus"], exporters = ["prometheus_remote_write"] } }
+    }
+  })
 }
 
 # ---------------------------------------------------------------- network (all free)
@@ -162,6 +184,7 @@ resource "aws_iam_role_policy" "execution" {
 #   alerts.Notifier       sns:Publish (KMS use is granted by the topic key's policy, via SNS only)
 #   worker.load_registry  iot:ListThings
 #   authlog.AuthLogPoller logs:FilterLogEvents
+#   metrics sidecar       aps:RemoteWrite (ADR 0001; the spec change was owner-approved)
 resource "aws_iam_role" "task" {
   name                 = "${local.name}-task"
   permissions_boundary = var.permissions_boundary_arn
@@ -203,6 +226,12 @@ resource "aws_iam_role_policy" "task" {
         Effect   = "Allow"
         Action   = ["logs:FilterLogEvents"]
         Resource = [var.iot_log_group_arn, "${var.iot_log_group_arn}:*"]
+      },
+      {
+        Sid      = "PushMetrics"
+        Effect   = "Allow"
+        Action   = ["aps:RemoteWrite"]
+        Resource = var.prometheus_workspace_arn
       },
     ]
   })
@@ -254,7 +283,7 @@ resource "aws_ecs_task_definition" "worker" {
     user                   = "10001"
     linuxParameters        = { initProcessEnabled = true } # forwards SIGTERM, reaps zombies
     stopTimeout            = 30                            # one 20 s long poll + finishing the batch
-    # The slim image has no curl; Python's stdlib does the HTTP check. Non-200 -> exception -> exit 1.
+    # No curl in the image; Python's stdlib does the HTTP check. Non-200 -> exception -> exit 1.
     healthCheck = {
       command     = ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${local.port}/health', timeout=3)"]
       interval    = 30
@@ -268,6 +297,24 @@ resource "aws_ecs_task_definition" "worker" {
         awslogs-group         = aws_cloudwatch_log_group.worker.name
         awslogs-region        = local.region
         awslogs-stream-prefix = "worker"
+      }
+    }
+    }, {
+    # Metrics sidecar. Non-essential: if it dies, the worker keeps detecting attacks (metrics
+    # pause, alerts don't). Index 1, so the worker stays container_definitions[0].
+    name                   = "metrics-forwarder"
+    image                  = var.collector_image
+    essential              = false
+    environment            = [{ name = "AOT_CONFIG_CONTENT", value = local.collector_config }]
+    readonlyRootFilesystem = true
+    memory                 = var.collector_memory_mb # hard cap: it can never starve the worker
+    dependsOn              = [{ containerName = "worker", condition = "START" }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.worker.name
+        awslogs-region        = local.region
+        awslogs-stream-prefix = "metrics-forwarder"
       }
     }
   }])

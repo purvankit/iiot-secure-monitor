@@ -151,8 +151,39 @@ environment secret `AWS_APPLY_ROLE_ARN` (values from `terraform -chdir=infra/ci 
 `backend.hcl` and `terraform.tfvars`). Secrets keep the account ID out of the public repo;
 the workflows also mask it in logs.
 
+## Grafana dashboards (M6)
+
+The Fargate task accepts no inbound connections, so its ADOT sidecar **pushes** the worker's
+metrics to Amazon Managed Prometheus (ADR `docs/adr/0001-grafana-metrics-source.md`). Grafana
+runs on the laptop and reads them from there. The worker must be running (Actions → deploy →
+Run workflow → `desired_count` 1) for new data to appear.
+
+**1. One-time: fetch the pinned Grafana plugin** (checksum-verified):
+```bash
+cd ~/projects/iiot-secure-monitor
+./scripts/fetch-grafana-plugin.sh
+```
+
+**2. Start Grafana** with temporary AWS credentials (re-run all four lines when the session expires):
+```bash
+cd ~/projects/iiot-secure-monitor
+export AMP_QUERY_URL=$(AWS_PROFILE=iiot terraform -chdir=infra/envs/dev output -raw prometheus_query_url)
+eval "$(aws configure export-credentials --profile iiot --format env)"
+docker compose --profile monitoring up -d --force-recreate grafana
+```
+Open http://localhost:3000. The "IIoT detection worker" dashboard is the home page.
+
+**3. Stop it:**
+```bash
+cd ~/projects/iiot-secure-monitor
+docker compose stop grafana
+```
+
+If panels show "No data": check the worker is running, then the sidecar's log in CloudWatch
+(`/ecs/iiot-worker`, streams `metrics-forwarder/...`).
+
 ## Run the detection service on Fargate by hand (M4; break-glass only since M5)
-Fargate bills per task-hour (~$0.012/h at the indicative us-east-1 rate in CLAUDE.md, plus $0.005/h for the public IPv4), so the service
+Fargate bills per task-hour (~$0.012/h at the indicative us-east-1 rate in the project brief, plus $0.005/h for the public IPv4), so the service
 sits at `desired_count = 0` and only runs while you demo. Every step starts from the repo root.
 
 **1. Build and push the image.** Tags are immutable: one tag per build, never `latest`.

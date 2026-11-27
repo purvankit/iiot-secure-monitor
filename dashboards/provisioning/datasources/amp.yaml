@@ -1,0 +1,16 @@
+# Grafana datasource: Amazon Managed Prometheus, queried with SigV4-signed requests.
+# Credentials come from the environment (temporary `aws login` session, see infra/README.md).
+apiVersion: 1
+datasources:
+  - name: AMP
+    uid: amp
+    type: grafana-amazonprometheus-datasource  # Grafana 13 serves SigV4 Prometheus through this plugin
+    access: proxy
+    url: ${AMP_QUERY_URL}
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      sigV4Auth: true
+      sigV4AuthType: default
+      sigV4Region: ap-south-1

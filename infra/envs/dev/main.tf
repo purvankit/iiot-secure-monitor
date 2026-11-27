@@ -87,6 +87,16 @@ variable "image_tag" {
   }
 }
 
+# Metrics store for Grafana (ADR 0001): the worker's sidecar remote-writes here.
+module "monitoring" {
+  source = "../../modules/monitoring"
+}
+
+output "prometheus_query_url" {
+  description = "AMP endpoint for the local Grafana datasource"
+  value       = module.monitoring.query_url
+}
+
 module "compute" {
   source                   = "../../modules/compute"
   permissions_boundary_arn = local.boundary_arn
@@ -103,7 +113,8 @@ module "compute" {
     latest   = module.data.latest_table
     alerts   = module.data.alerts_table
   }
-  table_arns = module.data.table_arns
+  table_arns               = module.data.table_arns
+  prometheus_workspace_arn = module.monitoring.workspace_arn
 }
 
 output "ecr_repository_url" {

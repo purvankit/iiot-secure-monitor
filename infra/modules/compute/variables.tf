@@ -49,3 +49,24 @@ variable "permissions_boundary_arn" {
   type        = string
   default     = null
 }
+
+variable "prometheus_workspace_arn" {
+  description = "AMP workspace the metrics sidecar may remote-write to (and nothing else)"
+  type        = string
+  validation {
+    condition     = can(regex("^arn:aws:aps:[a-z0-9-]+:[0-9]{12}:workspace/[A-Za-z0-9-]+$", var.prometheus_workspace_arn))
+    error_message = "must be one AMP workspace ARN, no wildcards"
+  }
+}
+
+variable "collector_image" {
+  description = "ADOT collector, pinned by version AND digest (scanned: 0 HIGH/CRITICAL, 2026-11-27)"
+  type        = string
+  default     = "public.ecr.aws/aws-observability/aws-otel-collector:v0.51.0@sha256:955e240b27d7fd3c7995fd937db4b963975948eb553f656d8c37a564e5b5e07d"
+}
+
+variable "collector_memory_mb" {
+  description = "Hard memory limit for the sidecar inside the 512 MB task (set from measurement)"
+  type        = number
+  default     = 128
+}

@@ -61,3 +61,9 @@ mock_resource "aws_ecs_service" {
 mock_resource "aws_iam_policy" {
   defaults = { arn = "arn:aws:iam::123456789012:policy/mock" }
 }
+mock_resource "aws_prometheus_workspace" {
+  defaults = {
+    arn                 = "arn:aws:aps:ap-south-1:123456789012:workspace/ws-mock"
+    prometheus_endpoint = "https://aps-workspaces.ap-south-1.amazonaws.com/workspaces/ws-mock/"
+  }
+}

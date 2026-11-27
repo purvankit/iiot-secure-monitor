@@ -77,3 +77,16 @@ run "accepts_immutable_subject_form" {
     error_message = "immutable-subject repos (owner@id/name@id) must produce the matching sub"
   }
 }
+
+run "boundary_covers_every_task_role_action" {
+  # Lesson from M5: an action in a role policy but not in the boundary is denied in AWS while
+  # every offline test passes. Keep this list in sync with modules/compute's task role.
+  command = apply
+  assert {
+    condition = length(setsubtract(toset([
+      "sqs:ReceiveMessage", "sqs:DeleteMessage", "dynamodb:PutItem", "dynamodb:Scan",
+      "sns:Publish", "iot:ListThings", "logs:FilterLogEvents", "aps:RemoteWrite",
+    ]), toset(flatten([for s in jsondecode(aws_iam_policy.workload_boundary.policy).Statement : s.Action])))) == 0
+    error_message = "every task-role action must also be allowed by the workload boundary"
+  }
+}

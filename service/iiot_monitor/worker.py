@@ -33,6 +33,32 @@ LATENCY = Histogram("iiot_processing_seconds", "Per-message processing time")
 REGISTRY_REFRESH_S = 300
 AUTHLOG_POLL_S = 60
 
+# Every (rule, severity) the code can raise, and every message result. A Prometheus counter
+# series first appears already at 1, and increase()/rate() can't count that first step, so a
+# rule that fires once (the usual attack) would show 0 on the dashboard. Creating all known
+# series at 0 on startup makes the first alert visible. test_worker keeps this list in sync
+# with rules.py.
+KNOWN_ALERTS = [
+    ("R0.malformed", "medium"),
+    ("R1.unknown_device", CRITICAL), ("R1.identity_mismatch", CRITICAL),
+    ("R1.type_mismatch", CRITICAL),
+    ("R1.auth_failure_publish_in", "high"), ("R1.auth_failure_connect", "high"),
+    ("R1.auth_failure_subscribe", "high"),
+    ("R2.out_of_range", "high"), ("R2.rate_of_change", "medium"), ("R2.invalid_state", "high"),
+    ("R3.message_flood", "high"),
+    ("R4.duplicate_seq", "high"), ("R4.old_seq", "high"), ("R4.old_session", "high"),
+    ("R4.future_session", "high"), ("R4.stale", "medium"), ("R4.future_ts", "medium"),
+]
+MESSAGE_RESULTS = ["accepted", "rejected", "invalid", "duplicate_delivery", "error"]
+
+
+def init_metrics() -> None:
+    """Export every known label combination at 0 (see KNOWN_ALERTS)."""
+    for rule, severity in KNOWN_ALERTS:
+        ALERTS.labels(rule, severity)
+    for result in MESSAGE_RESULTS:
+        MESSAGES.labels(result)
+
 
 def load_registry(iot) -> dict[str, str]:
     """device_id -> device_type, straight from the IoT Thing registry."""
@@ -149,6 +175,7 @@ def main() -> None:
                           int(os.getenv("ALERT_COOLDOWN_S", "300")) * 1000),
         authlog=AuthLogPoller(s.client("logs"), start_ms=int(time.time() * 1000)),
     )
+    init_metrics()
     serve_http(int(os.getenv("HTTP_PORT", "8080")))
 
     def stop(*_):

@@ -6,14 +6,15 @@ mock_provider "aws" {
 }
 
 variables {
-  image_uri         = "123456789012.dkr.ecr.ap-south-1.amazonaws.com/iiot-monitor:abc123"
-  queue_arn         = "arn:aws:sqs:ap-south-1:123456789012:iiot-telemetry"
-  queue_url         = "https://sqs.ap-south-1.amazonaws.com/123456789012/iiot-telemetry"
-  dlq_name          = "iiot-telemetry-dlq"
-  alert_topic_arn   = "arn:aws:sns:ap-south-1:123456789012:iiot-alerts"
-  iot_log_group_arn = "arn:aws:logs:ap-south-1:123456789012:log-group:AWSIotLogsV2"
-  table_names       = { readings = "iiot-readings", latest = "iiot-latest", alerts = "iiot-alerts" }
-  table_arns        = ["arn:aws:dynamodb:ap-south-1:123456789012:table/iiot-readings"]
+  image_uri                = "123456789012.dkr.ecr.ap-south-1.amazonaws.com/iiot-monitor:abc123"
+  queue_arn                = "arn:aws:sqs:ap-south-1:123456789012:iiot-telemetry"
+  queue_url                = "https://sqs.ap-south-1.amazonaws.com/123456789012/iiot-telemetry"
+  dlq_name                 = "iiot-telemetry-dlq"
+  alert_topic_arn          = "arn:aws:sns:ap-south-1:123456789012:iiot-alerts"
+  iot_log_group_arn        = "arn:aws:logs:ap-south-1:123456789012:log-group:AWSIotLogsV2"
+  table_names              = { readings = "iiot-readings", latest = "iiot-latest", alerts = "iiot-alerts" }
+  table_arns               = ["arn:aws:dynamodb:ap-south-1:123456789012:table/iiot-readings"]
+  prometheus_workspace_arn = "arn:aws:aps:ap-south-1:123456789012:workspace/ws-mock"
 }
 
 run "scaled_to_zero_has_no_not_running_alarm" {
@@ -68,4 +69,37 @@ run "both_roles_carry_the_boundary" {
     && aws_iam_role.execution.permissions_boundary == "arn:aws:iam::123456789012:policy/iiot-workload-boundary")
     error_message = "CI may only manage roles that carry the workload boundary"
   }
+}
+
+run "metrics_sidecar_contract" {
+  command = apply
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.worker.container_definitions)[0].name == "worker"
+    error_message = "the worker must stay container_definitions[0] (frozen spec checks index 0)"
+  }
+  assert {
+    condition = (jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].name == "metrics-forwarder"
+      && !jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].essential
+    && jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].readonlyRootFilesystem)
+    error_message = "sidecar: non-essential (metrics may pause, detection must not) and read-only"
+  }
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].memory < 512
+    error_message = "sidecar has a hard memory cap below the task size, so it can't starve the worker"
+  }
+  assert {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].image))
+    error_message = "third-party sidecar image pinned by digest, like the CI actions"
+  }
+  assert {
+    condition = (strcontains(yamldecode(jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].environment[0].value).exporters.prometheus_remote_write.endpoint, "/workspaces/ws-mock/api/v1/remote_write")
+    && yamldecode(jsondecode(aws_ecs_task_definition.worker.container_definitions)[1].environment[0].value).receivers.prometheus.config.scrape_configs[0].static_configs[0].targets == ["localhost:8080"])
+    error_message = "sidecar scrapes the worker over localhost and writes to THIS workspace"
+  }
+}
+
+run "rejects_wildcard_workspace" {
+  command = plan
+  variables { prometheus_workspace_arn = "arn:aws:aps:ap-south-1:123456789012:workspace/*" }
+  expect_failures = [var.prometheus_workspace_arn]
 }

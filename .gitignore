@@ -237,3 +237,7 @@ infra/envs/*/terraform.tfvars
 # Lock files for test-only roots and reusable modules (envs/* and bootstrap locks are committed)
 infra/modules/*/.terraform.lock.hcl
 tests/spec/tf/.terraform.lock.hcl
+
+# Grafana plugin binaries (fetched + checksum-verified by scripts/fetch-grafana-plugin.sh)
+local/grafana-plugins/
+local/.grafana-plugin-*

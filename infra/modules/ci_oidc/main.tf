@@ -216,6 +216,15 @@ resource "aws_iam_policy" "workload_boundary" {
         Resource = "arn:aws:ecr:${local.region}:${local.account}:repository/${local.p}-*"
       },
       {
+        # ADR 0001: the metrics sidecar pushes to AMP. Workspace IDs are random (ws-...), so
+        # the ceiling allows any workspace in this account+region; the task role itself is
+        # pinned to the one workspace ARN.
+        Sid      = "PushMetrics"
+        Effect   = "Allow"
+        Action   = ["aps:RemoteWrite"]
+        Resource = "arn:aws:aps:${local.region}:${local.account}:workspace/*"
+      },
+      {
         Sid    = "UnscopableReads"
         Effect = "Allow"
         Action = ["iot:ListThings", "ecr:GetAuthorizationToken"]

@@ -164,16 +164,24 @@ cd ~/projects/iiot-secure-monitor
 ./scripts/fetch-grafana-plugin.sh
 ```
 
-**2. Start Grafana** with temporary AWS credentials (re-run all four lines when the session expires):
+**2. Keep Grafana's AWS credentials fresh** (own terminal, leave it running). `aws login`
+credentials rotate about every 15 minutes; this loop rewrites the file Grafana's SDK reads
+through `credential_process`, so Grafana renews them by itself:
+```bash
+cd ~/projects/iiot-secure-monitor
+./scripts/grafana-aws-creds.sh
+```
+
+**3. Start Grafana** (another terminal):
 ```bash
 cd ~/projects/iiot-secure-monitor
 export AMP_QUERY_URL=$(AWS_PROFILE=iiot terraform -chdir=infra/envs/dev output -raw prometheus_query_url)
-eval "$(aws configure export-credentials --profile iiot --format env)"
 docker compose --profile monitoring up -d --force-recreate grafana
 ```
-Open http://localhost:3000. The "IIoT detection worker" dashboard is the home page.
+Open http://localhost:3000/d/iiot-worker?from=now-5m&to=now&refresh=10s. Check that the
+Refresh button says **10s** and the time axis moves.
 
-**3. Stop it:**
+**4. Stop it:** Ctrl+C in the credentials terminal, then:
 ```bash
 cd ~/projects/iiot-secure-monitor
 docker compose stop grafana

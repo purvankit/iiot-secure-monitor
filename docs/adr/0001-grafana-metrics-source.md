@@ -176,3 +176,22 @@ Prometheus in place of AMP. Then Grafana with the real provisioning files.
 8. **Credentials:** Grafana uses the owner's temporary `aws login` session (admin). A dedicated
    read-only role (`aps:QueryMetrics`, `aps:GetLabels`, `aps:GetSeries`,
    `aps:GetMetricMetadata`) would be tighter; noted as a follow-up.
+
+## Results in AWS (2026-11-27)
+
+- **Memory and CPU, measured on Fargate** over ~3.5 hours with both containers: memory 15.1%
+  average, 15.2% peak of 512 MB (the worker alone peaked at 10.4% the day before, so the
+  sidecar adds ~5 points, about 25 MB, close to the ~24 MiB measured offline). CPU 9.0% average,
+  27.2% peak of 0.25 vCPU. No memory spec change needed; open item 1 is closed.
+- **End to end:** the sidecar pushed every 15 s with no errors in its log; all 8 alert series of
+  the attack run were visible in Grafana through AMP.
+- **Credentials (finding 8, solved):** `aws login` credentials rotate about every 15 minutes, so
+  a one-off copy made Grafana go blank mid-recording twice. Grafana now uses
+  `credential_process = cat /aws/creds.json`, and `scripts/grafana-aws-creds.sh` rewrites that file
+  from the live session every minute. The SDK re-runs the process when its credentials expire.
+  Verified: one Grafana container served queries for 2+ hours across ~9 rotations, no restart.
+- **Silent auto-refresh failure:** the dashboard asked for a 15 s refresh, which isn't in
+  Grafana's allowed list, so Grafana silently disabled auto-refresh. Backend checks all passed;
+  only the browser recording showed a frozen view. Now 10 s, with the allowed intervals stated.
+- **Counts shown to people are rounded:** `increase()` extrapolates to the window edges, so a
+  counter stepping 0 → 1 reads ~1.3. The count panels round each series to whole numbers.

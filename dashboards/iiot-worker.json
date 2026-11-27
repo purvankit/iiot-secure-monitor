@@ -6,13 +6,13 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 3,
   "editable": true,
   "time": {
     "from": "now-30m",
     "to": "now"
   },
-  "refresh": "15s",
+  "refresh": "10s",
   "panels": [
     {
       "id": 1,
@@ -67,13 +67,14 @@
             "type": "grafana-amazonprometheus-datasource",
             "uid": "amp"
           },
-          "expr": "sum(increase(iiot_messages_total[$__range]))",
+          "expr": "sum(round(increase(iiot_messages_total[$__range])))",
           "legendFormat": "messages"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -101,13 +102,14 @@
             "type": "grafana-amazonprometheus-datasource",
             "uid": "amp"
           },
-          "expr": "sum(increase(iiot_alerts_total[$__range]))",
+          "expr": "sum(round(increase(iiot_alerts_total[$__range])))",
           "legendFormat": "alerts"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -135,13 +137,14 @@
             "type": "grafana-amazonprometheus-datasource",
             "uid": "amp"
           },
-          "expr": "sum by (result) (increase(iiot_messages_total{result=~\"rejected|invalid|error\"}[$__range]))",
+          "expr": "sum by (result) (round(increase(iiot_messages_total{result=~\"rejected|invalid|error\"}[$__range])))",
           "legendFormat": "{{result}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -203,7 +206,7 @@
             "type": "grafana-amazonprometheus-datasource",
             "uid": "amp"
           },
-          "expr": "sum by (rule) (increase(iiot_alerts_total[1m]))",
+          "expr": "sum by (rule) (round(increase(iiot_alerts_total[1m])))",
           "legendFormat": "{{rule}}"
         }
       ],
@@ -212,7 +215,8 @@
           "custom": {
             "drawStyle": "bars",
             "fillOpacity": 80
-          }
+          },
+          "decimals": 0
         },
         "overrides": []
       },
@@ -263,5 +267,14 @@
       "description": "Time inside the worker per message (parse, detect, store, notify); excludes queue wait."
     }
   ],
-  "description": "Prometheus metrics of the Fargate detection worker, pushed to Amazon Managed Prometheus by its ADOT sidecar (ADR 0001)."
+  "description": "Prometheus metrics of the Fargate detection worker, pushed to Amazon Managed Prometheus by its ADOT sidecar (ADR 0001).",
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  }
 }

@@ -46,7 +46,7 @@ jobs:
         run: python -m pytest -q tests --ignore=tests/spec
       - name: Specs of finished milestones (M4 builds the image, needs Docker)
         # Add each milestone here once it's done; unfinished specs are expected to be red.
-        run: python -m pytest -q tests/spec -m "m4 or m5"
+        run: python -m pytest -q tests/spec -m "m4 or m5 or m6"
 
   terraform:
     name: terraform fmt / validate / test

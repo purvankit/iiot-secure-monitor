@@ -59,9 +59,11 @@ services:
     environment:
       AMP_QUERY_URL: ${AMP_QUERY_URL:-}
       AWS_REGION: ap-south-1
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      # Credentials: the SDK runs `credential_process` (see local/grafana-aws/config) again
+      # whenever they expire; scripts/grafana-aws-creds.sh keeps that file fresh.
+      AWS_CONFIG_FILE: /aws/config
+      AWS_PROFILE: grafana
+      AWS_SDK_LOAD_CONFIG: "true"
       GF_AUTH_SIGV4_AUTH_ENABLED: "true"            # sign Prometheus queries for AMP
       GF_AWS_ALLOWED_AUTH_PROVIDERS: default        # credentials from the env vars above
       # Grafana 13 serves SigV4 Prometheus through a separate plugin process, which only sees
@@ -79,3 +81,4 @@ services:
       - ./dashboards:/var/lib/grafana/dashboards:ro
       - ./dashboards/provisioning:/etc/grafana/provisioning:ro
       - ./local/grafana-plugins:/var/lib/grafana/plugins:ro
+      - ./local/grafana-aws:/aws:ro

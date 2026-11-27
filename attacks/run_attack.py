@@ -39,8 +39,17 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def client():
-    return connect(STOLEN, HOST, 8883, TlsFiles.for_device(CERTS, STOLEN))
+def client(attempts: int = 5):
+    """Connect as the stolen identity. Retries: a laptop network blip (e.g. a WSL route
+    dropping for a second) shouldn't abort the whole demo; a real auth failure still fails."""
+    for i in range(attempts):
+        try:
+            return connect(STOLEN, HOST, 8883, TlsFiles.for_device(CERTS, STOLEN))
+        except OSError as e:  # network-level only (no route, DNS, timeout)
+            if i == attempts - 1:
+                raise
+            print(f"connect failed ({type(e).__name__}: {e.strerror or e}); retrying", flush=True)
+            time.sleep(2)
 
 
 def send(c, msg: dict, topic: str | None = None):
@@ -103,7 +112,11 @@ def latest_capture() -> dict:
     cutoff = CAPTURE_BEFORE_MS / 1000
     newest = max((o for p in objs for o in p.get("Contents", [])
                   if o["LastModified"].timestamp() < cutoff),
-                 key=lambda o: o["LastModified"])
+                 key=lambda o: o["LastModified"], default=None)
+    if newest is None:
+        # No bucket name in the message: it contains the account ID (public demo recordings).
+        raise SystemExit(f"replay: no genuine {STOLEN} traffic archived today ({prefix}). "
+                         f"Run the simulator with {STOLEN} for ~20 s first.")
     m = json.loads(s3.get_object(Bucket=bucket, Key=newest["Key"])["Body"].read())
     return {k: v for k, v in m.items() if k not in BROKER_FIELDS}  # as the device sent it
 

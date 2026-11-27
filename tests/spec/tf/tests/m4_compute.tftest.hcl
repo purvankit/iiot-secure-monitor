@@ -19,6 +19,8 @@ variables {
     "arn:aws:dynamodb:ap-south-1:123456789012:table/iiot-latest",
     "arn:aws:dynamodb:ap-south-1:123456789012:table/iiot-alerts",
   ]
+  # Added 2026-11-27, owner-approved (ADR 0001): metrics leave the task by push to AMP.
+  prometheus_workspace_arn = "arn:aws:aps:ap-south-1:123456789012:workspace/ws-mock"
 }
 
 run "cost_safe_defaults" {
@@ -127,8 +129,9 @@ run "task_role_is_least_privilege" {
     condition = toset(flatten([for s in jsondecode(aws_iam_role_policy.task.policy).Statement : s.Action])) == toset([
       "sqs:ReceiveMessage", "sqs:DeleteMessage", "dynamodb:PutItem", "dynamodb:Scan",
       "sns:Publish", "iot:ListThings", "logs:FilterLogEvents",
+      "aps:RemoteWrite", # 2026-11-27, owner-approved (ADR 0001): metrics sidecar pushes to AMP
     ])
-    error_message = "task role = exactly the API calls the worker makes, nothing more"
+    error_message = "task role = exactly the API calls the task makes, nothing more"
   }
   assert {
     condition = alltrue([for s in jsondecode(aws_iam_role_policy.task.policy).Statement :
@@ -144,6 +147,13 @@ run "task_role_is_least_privilege" {
     condition = alltrue([for s in jsondecode(aws_iam_role_policy.task.policy).Statement :
     !contains(flatten([s.Action]), "sns:Publish") || s.Resource == var.alert_topic_arn])
     error_message = "SNS publish only to the alerts topic"
+  }
+  # Added 2026-11-27, owner-approved (ADR 0001). Stricter, not weaker: the new permission
+  # is pinned to the project's own workspace.
+  assert {
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.task.policy).Statement :
+    !contains(flatten([s.Action]), "aps:RemoteWrite") || s.Resource == var.prometheus_workspace_arn])
+    error_message = "metrics may only be written to the project's AMP workspace"
   }
 }
 

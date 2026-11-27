@@ -1,0 +1,34 @@
+# Install-time values come from `terraform output` (scripts/k8s-up.sh), so no account ID or
+# AWS endpoint is stored in the repo.
+image:
+  repository: ""        # the ECR repository URL
+  tag: ""               # required: the 40-char commit SHA of a CI-built, scanned image
+  pullPolicy: Never     # loaded into kind with `kind load docker-image`; never pulled in-cluster
+
+aws:
+  region: ap-south-1
+  queueUrl: ""
+  tables:
+    readings: iiot-readings
+    latest: iiot-latest
+    alerts: iiot-alerts
+  alertTopicArn: ""
+  # Created and refreshed by scripts/k8s-aws-creds.sh, never by this chart: it holds 1-hour
+  # credentials of the scoped iiot-worker-local role, read through credential_process.
+  credentialsSecret: iiot-worker-aws
+
+# Same size as the Fargate task (0.25 vCPU / 512 MB).
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 512Mi
+
+metrics:
+  serviceMonitor:
+    interval: 15s
+
+networkPolicy:
+  monitoringNamespace: monitoring

@@ -115,6 +115,19 @@ module "compute" {
   }
   table_arns               = module.data.table_arns
   prometheus_workspace_arn = module.monitoring.workspace_arn
+  # S1: lets this IAM user run the same worker on a laptop kind cluster, with this module's
+  # scoped role (task-role permissions minus metrics push, 1 h sessions).
+  local_worker_principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${var.local_worker_user}"
+}
+
+variable "local_worker_user" {
+  description = "IAM user allowed to assume the local (kind) worker role"
+  type        = string
+  default     = "purvankit-dev"
+}
+
+output "local_worker_role_arn" {
+  value = module.compute.local_worker_role_arn
 }
 
 output "ecr_repository_url" {

@@ -1,0 +1,9 @@
+# Local Kubernetes for S1: one node is enough (worker + kube-prometheus-stack, ~3 GB RAM).
+# Node image pinned by digest, as published in the kind v0.33.0 release notes.
+# Create: kind create cluster --config k8s/kind-cluster.yaml   (scripts/k8s-up.sh does this)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: iiot
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

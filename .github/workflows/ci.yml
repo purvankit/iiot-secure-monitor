@@ -36,6 +36,11 @@ jobs:
             tests/requirements.txt
       - name: Install
         run: python -m pip install -e './simulator[dev]' -e './service[dev]' -r tests/requirements.txt
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.22.1 # same pinned helm as scripts/install-k8s-tools.sh
+      - name: Helm lint (S1 chart)
+        run: helm lint k8s/charts/iiot-worker -f tests/spec/s1-values.yaml
       - name: Ruff
         run: ruff check .
       - name: Simulator tests
@@ -44,9 +49,9 @@ jobs:
         run: cd service && python -m pytest -q
       - name: Repo guardrails + attack scripts
         run: python -m pytest -q tests --ignore=tests/spec
-      - name: Specs of finished milestones (M4 builds the image, needs Docker)
+      - name: Specs of finished milestones (M4 builds the image, needs Docker; S1 needs helm)
         # Add each milestone here once it's done; unfinished specs are expected to be red.
-        run: python -m pytest -q tests/spec -m "m4 or m5 or m6"
+        run: python -m pytest -q tests/spec -m "m4 or m5 or m6 or s1"
 
   terraform:
     name: terraform fmt / validate / test

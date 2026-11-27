@@ -1,0 +1,12 @@
+# Grafana's sidecar (kube-prometheus-stack) loads ConfigMaps labelled grafana_dashboard=1.
+# Same panels and PromQL as dashboards/iiot-worker.json (a spec test checks they match).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iiot-worker-dashboard
+  labels:
+    grafana_dashboard: "1"
+    {{- include "iiot-worker.labels" . | nindent 4 }}
+data:
+  iiot-worker.json: |-
+    {{- .Files.Get "files/iiot-worker.json" | nindent 4 }}

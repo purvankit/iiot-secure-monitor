@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iiot-worker
+  labels:
+    {{- include "iiot-worker.labels" . | nindent 4 }}
+spec:
+  # One worker only: flood windows and replay sequence numbers live in one process.
+  replicas: 1
+  # Stop the old pod before starting the new one (like the Fargate service's 0%/100%).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "iiot-worker.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "iiot-worker.selector" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false   # the worker never talks to the Kubernetes API
+      terminationGracePeriodSeconds: 30     # one 20 s SQS long poll + finishing the batch
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: {{ include "iiot-worker.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.aws.region | quote }}
+            - name: QUEUE_URL
+              value: {{ required "aws.queueUrl is required" .Values.aws.queueUrl | quote }}
+            - name: TABLE_READINGS
+              value: {{ .Values.aws.tables.readings | quote }}
+            - name: TABLE_LATEST
+              value: {{ .Values.aws.tables.latest | quote }}
+            - name: TABLE_ALERTS
+              value: {{ .Values.aws.tables.alerts | quote }}
+            - name: ALERT_TOPIC_ARN
+              value: {{ required "aws.alertTopicArn is required" .Values.aws.alertTopicArn | quote }}
+            # Credentials: botocore runs credential_process from this config, again whenever
+            # the 1-hour credentials expire. No access keys in the environment.
+            - name: AWS_CONFIG_FILE
+              value: /aws/config
+            - name: AWS_PROFILE
+              value: worker
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: aws-credentials
+              mountPath: /aws
+              readOnly: true
+      volumes:
+        - name: aws-credentials
+          secret:
+            secretName: {{ .Values.aws.credentialsSecret }}
+            defaultMode: 0444

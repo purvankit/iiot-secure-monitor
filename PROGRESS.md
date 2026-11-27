@@ -1,7 +1,7 @@
 # PROGRESS.md: project state for new sessions
 
 > Read this first, then the project brief (instructions file at the repo root). Update this file at the end of every session.
-> Last updated: 2026-11-27 (M6 done; v1 core complete).
+> Last updated: 2026-11-27 (S1 done: core + stretch complete).
 
 ## Status at a glance
 
@@ -14,7 +14,8 @@
 | M4 Containerise, ECR + ECS Fargate, CloudWatch | Done (2026-11-26) | M4 specs green; live: 47/47 msgs stored by the Fargate task, 0 alerts; forced error → both alarms → SNS |
 | M5 GitHub Actions (CI/CD, OIDC) | Done (2026-11-26), PR #1 → `c49c16a` | ci + deploy green on main; merge → approve → build/scan/push/apply; boundary verified live (see below) |
 | M6 Dashboards, attack demos, README | Done (2026-11-27), PRs #4, #5, + demo PR | M6 spec 6/6; Fargate demo: 6/6 attacks detected, 0.04-0.09 s on the MQTT path; both GIFs from one run (see below) |
-| **S1 Local Kubernetes (stretch)** or **SOC home lab** | **Next: owner decides** | see below |
+| S1 Local Kubernetes (stretch) | Done (2026-11-27), PR #7 + docs PR | S1 spec (15 Helm + 3 Terraform) green; live in kind: 14/14 pods, Grafana 8/8 panels, NetworkPolicy enforced |
+| **SOC home lab (next project)** | **Next** | see below |
 
 ## M4 results (2026-11-26)
 
@@ -65,17 +66,31 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 - Grafana: laptop only (`docker compose --profile monitoring`), plugin pinned + checksum-verified,
   no startup downloads, credentials via `credential_process` + `scripts/grafana-aws-creds.sh`.
 
-## Next (owner decides)
+## S1 results (2026-11-27)
 
-1. **S1 stretch (10-15 h):** same containers on local Kubernetes (k3d/kind) + kube-prometheus-stack.
-   Fills the Kubernetes gap (58% of cloud/DevOps postings in the 2026-11-14 analysis).
-2. **SOC home lab (next project per the plan):** Wazuh SIEM ingesting this platform's alerts and AWS
-   logs. Raises security-role coverage the most (35% -> 60% in the analysis).
-3. Resume: add this project's bullets (only built + measured items); see the personal brief.
-4. Follow-ups (documented, not blocking): read-only IAM role for Grafana (aps:Query* only);
+- Decisions (owner, with pros/cons): kind (not k3d / Docker Desktop K8s); worker uses the REAL AWS
+  pipeline through a new scoped role `iiot-worker-local` (task-role statements minus PushMetrics,
+  one shared list; boundary; 1 h sessions; only IAM user purvankit-dev may assume it).
+- Spec first: `spec(S1): ...` commit frozen before any code (15 Helm-chart + 3 Terraform tests,
+  additions-only conftest change). 5 deliberate chart breaks each caught by exactly one test.
+- Tools pinned + SHA-256 verified (`scripts/install-k8s-tools.sh`, owner-run): kind v0.33.0,
+  helm v3.22.1; kindest/node v1.37.0 by digest; kube-prometheus-stack 93.2.2.
+- Live (first run): bring-up ~5 min; 14/14 pods Running, worker restarts 0; worker identity
+  `assumed-role/iiot-worker-local`; Prometheus target up; in-cluster Grafana loaded the dashboard
+  from the chart's ConfigMap, 8/8 panels with data; simulator 36 msgs -> dashboard 37;
+  NetworkPolicy: from `default` blocked, from `monitoring` allowed, egress 443 allowed, 80 blocked;
+  cluster 2.25 GiB RAM.
+- Terraform plan proved the task-role refactor was a no-op (existing policy not listed as changed).
+
+## Next
+
+1. **SOC home lab (next project per the plan):** Wazuh SIEM ingesting this platform's alerts and AWS
+   logs (CloudTrail, IoT auth failures). Raises security-role coverage the most (40% -> 66% with both).
+2. **Resume:** add this project's bullets (only built + measured items; see the personal brief).
+3. Follow-ups (documented, not blocking): read-only IAM role for Grafana (aps:Query* only);
    CloudWatch Logs subscription for near-real-time auth-failure alerts; persist the replay window.
-5. Local cleanup the owner may do: delete `backup/pre-email-rewrite` and `backup/pre-trailer-rewrite`
-   (old history with Gmail / attribution trailers; never push them).
+4. Local cleanup the owner may do: delete `backup/pre-email-rewrite` and `backup/pre-trailer-rewrite`
+   (old history with Gmail / attribution trailers; never push them); `kind delete cluster --name iiot`.
 
 ## Tests (how to know nothing is broken)
 
@@ -85,7 +100,7 @@ Live test, worker on Fargate with the least-privilege task role, image `dev-0777
 | Service | `cd service && ../.venv/bin/pytest -q` | 66 pass |
 | Repo guardrails + attacks | `.venv/bin/pytest -q tests --ignore=tests/spec` | 25 pass |
 | Terraform modules (offline mocks) | `terraform -chdir=infra/modules/<m> test` for iot, ingest, data, alerts, compute, ci_oidc | 25 pass |
-| M4 + M5 + M6 specs | `.venv/bin/pytest -q tests/spec` (needs Docker) + `terraform -chdir=tests/spec/tf test` | 33 + 10 pass; CI runs all three |
+| M4-M6 + S1 specs | `.venv/bin/pytest -q tests/spec` (needs Docker + helm) + `terraform -chdir=tests/spec/tf test` | 48 + 13 pass; CI runs all |
 | CI (all of the above) | GitHub Actions `ci` on every PR/push; `deploy` plans on PRs | green on main |
 
 Spec tests were written BEFORE M4-M6 and are frozen (rule in the project brief). Each was checked on
@@ -99,6 +114,16 @@ variables in the spec file), module `infra/modules/ci_oidc` (`plan`/`apply` role
 Guardrails: a needed `Resource = "*"` must carry `# guardrail: allow-wildcard (reason)`.
 
 ## Lessons learned (don't repeat these)
+
+- **Deploys to main run one at a time** (workflow concurrency): an unanswered deploy approval
+  blocks every later one ("pending"). Reject leftover runs promptly.
+- **A new ServiceMonitor takes ~1 min** before Prometheus scrapes it (the operator regenerates and
+  reloads the config). Don't conclude "broken" from the first seconds.
+- **A NetworkPolicy is only real if the CNI enforces it:** prove it with probes from an allowed and
+  a disallowed namespace (kindnet in kind v0.33 enforces it; verified).
+- **The frozen M6 spec forbids the literal "100%" in the README**, even in an unrelated table.
+- Read Terraform outputs with `terraform output` only; don't `refresh` envs/dev from the laptop
+  (CI owns its state).
 
 - **`aws login` credentials rotate every ~15 min.** Never hand a long-running tool (Grafana) a
   one-off copy: use `credential_process` so the SDK re-fetches. Cost two failed demo takes.
@@ -172,7 +197,9 @@ simulator/   devices, Modbus PLC sim, edge gateway (iiot_sim/), tests, README (M
 service/     detection service (iiot_monitor/): schema, rules R1-R4, alerts, store, authlog, worker
 infra/       bootstrap/ (state bucket, LOCAL state, backed up to S3 bootstrap/ key)
              modules/ iot, ingest, data, alerts, compute, ci_oidc, monitoring; envs/dev/; ci/ (owner-applied)
-scripts/     cert/key helpers, fetch-grafana-plugin.sh, grafana-aws-creds.sh, cast_to_gif.py
+scripts/     cert/key helpers, fetch-grafana-plugin.sh, grafana-aws-creds.sh, cast_to_gif.py,
+             install-k8s-tools.sh, k8s-up.sh, k8s-aws-creds.sh
+k8s/         kind-cluster.yaml, charts/iiot-worker (Helm), monitoring/ (kube-prometheus-stack values), README
 dashboards/  Grafana dashboard + provisioning;  docs/adr/ decision records;  docs/*.gif demo
 attacks/     run_attack.py (attacker), watch_alerts.py (cloud-side alert printer)
 local/       mosquitto config; gitignored: certs/, aws-certs/ (keys), grafana-plugins/, grafana-aws/ (temp creds), demo/
@@ -195,6 +222,7 @@ Gitignored, never commit: `local/certs/`, `local/aws-certs/`, `*.key`, `infra/en
 - GitHub: environment `dev` (required reviewer = owner, branch `main`), secrets `AWS_PLAN_ROLE_ARN`,
   `TF_STATE_BUCKET`, `ALERT_EMAIL` + env secret `AWS_APPLY_ROLE_ARN`, ruleset `protect-main`.
 - M6: AMP workspace `iiot-metrics` (no fixed fee; per sample, cents), ADOT sidecar in the task definition.
+- S1: IAM role `iiot-worker-local` (free). The kind cluster is local only (`kind delete cluster --name iiot`).
 - Nothing bills hourly while desired_count = 0. Run guide: `infra/README.md` → "Run the detection service on Fargate".
 
 ## Run the service (local, against real AWS)

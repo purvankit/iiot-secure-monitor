@@ -50,6 +50,20 @@ Run the simulator as usual (`infra/README.md`) to see traffic.
 kind delete cluster --name iiot
 ```
 
+## Measured (2026-11-27, first run)
+
+| Check | Result |
+|---|---|
+| Bring-up (`scripts/k8s-up.sh`, cold, images downloaded) | ~5 min to all pods ready |
+| `kubectl get pods -A` | 14/14 Running; worker restarts 0 |
+| Worker identity | `assumed-role/iiot-worker-local/iiot-kind-worker` (not the owner's login) |
+| Prometheus target for the worker | `up`, no scrape error (~1 min after install: operator config reload) |
+| In-cluster Grafana | Dashboard loaded from the chart's ConfigMap; 8/8 panel queries returned data |
+| End to end | Simulator 36 messages published → dashboard "messages processed" 37 seconds later |
+| NetworkPolicy, ingress | from `default`: blocked; from `monitoring`: allowed |
+| NetworkPolicy, egress | HTTPS to AWS (443): allowed; HTTP to example.com (80): blocked |
+| Cluster footprint (`docker stats`) | 2.25 GiB RAM of 7.7, ~26% CPU |
+
 ## Why these choices
 
 - **Pull here, push on Fargate.** Prometheus and the pod share the cluster network, so
